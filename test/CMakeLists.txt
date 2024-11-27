@@ -1,0 +1,43 @@
+add_executable(fileio_tests fileio_tests.cpp)
+
+target_include_directories(fileio_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(fileio_tests PRIVATE ...)
+
+target_link_directories(fileio_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(fileio_tests libunlambda)
+target_link_libraries(fileio_tests gtest_main gtest)
+target_link_libraries(fileio_tests pthread)
+
+add_executable(stack_tests stack_tests.cpp)
+
+target_include_directories(stack_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(stack_tests PRIVATE ...)
+
+target_link_directories(stack_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(stack_tests libunlambda)
+target_link_libraries(stack_tests gtest_main gtest)
+target_link_libraries(stack_tests pthread)
+
+add_executable(symtab_tests symtab_tests.cpp)
+
+target_include_directories(symtab_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(symtab_tests PRIVATE ...)
+
+target_link_directories(symtab_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(symtab_tests libunlambda)
+target_link_libraries(symtab_tests gtest_main gtest)
+target_link_libraries(symtab_tests pthread)
+
+add_executable(vmmem_tests vmmem_tests.cpp)
+
+target_include_directories(vmmem_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(vmmem_tests PRIVATE ...)
+
+target_link_directories(vmmem_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(vmmem_tests libunlambda)
+target_link_libraries(vmmem_tests gtest_main gtest)
+target_link_libraries(vmmem_tests pthread)
