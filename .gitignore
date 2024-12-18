@@ -59,3 +59,11 @@ CMakeFiles/*
 */CMakeFiles
 Makefile
 */Makefile
+
+# Unit test binaries
+test/*_tests
+
+# Logs from valgrind
+valgrind_logs/*
+
+
