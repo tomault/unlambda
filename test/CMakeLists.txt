@@ -31,7 +31,7 @@ target_link_libraries(symtab_tests libunlambda)
 target_link_libraries(symtab_tests gtest_main gtest)
 target_link_libraries(symtab_tests pthread)
 
-add_executable(vmmem_tests vmmem_tests.cpp)
+add_executable(vmmem_tests vmmem_tests.cpp testing_utils.cpp)
 
 target_include_directories(vmmem_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(vmmem_tests PRIVATE ...)
@@ -41,3 +41,14 @@ target_link_directories(vmmem_tests PUBLIC "/usr/local/lib")
 target_link_libraries(vmmem_tests libunlambda)
 target_link_libraries(vmmem_tests gtest_main gtest)
 target_link_libraries(vmmem_tests pthread)
+
+add_executable(vm_tests vm_tests.cpp testing_utils.cpp)
+
+target_include_directories(vm_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(vm_tests PRIVATE ...)
+
+target_link_directories(vm_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(vm_tests libunlambda)
+target_link_libraries(vm_tests gtest_main gtest)
+target_link_libraries(vm_tests pthread)

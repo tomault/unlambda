@@ -196,7 +196,7 @@
  *   PCALL   ; Compute u(cc).  Pops u and cc and pushes result
  *   RET     ; Continaution not invoked so return value of u(cc)
  *
- * Implemenation of MKC[state]:
+ * Code created by MKC[state]:
  *   PCALL   ; Replace y with u = y()
  *   PUSH state ;  Address of state to restore
  *   RESTORE 1 ; Pop the address of the saved interpreter state - call it s.
@@ -376,6 +376,8 @@ const int VmCallStackOverflowError = -10;
 const int VmAddressStackUnderflowError = -11;
 const int VmAddressStackOverflowError = -12;
 const int VmNoProgramLoadedError = -13;
+const int VmFatalError = -14;
+const int VmIllegalArgumentError = -15;
 
 static int executeNextInstruction(UnlambdaVM vm);
 static int executePushInstruction(UnlambdaVM vm);
@@ -404,6 +406,8 @@ static int pushToAddressStack(UnlambdaVM vm, uint64_t addr);
 static int popFromAddressStack(UnlambdaVM vm, uint64_t* addr);
 static int pushToCallStack(UnlambdaVM vm, uint64_t addr);
 static int popFromCallStack(UnlambdaVM vm, uint64_t* addr);
+static int readFromAddressStackTop(UnlambdaVM vm, uint64_t depth,
+				   uint64_t* value);
 static CodeBlock* allocateCodeBlock(UnlambdaVM vm, const char* instruction,
 				    uint64_t size);
 static VmStateBlock* allocateVmStateBlock(UnlambdaVM vm,
@@ -415,7 +419,7 @@ static void reportBlockAllocationFailure(UnlambdaVM vm,
 					 uint64_t size,
 					 const char* details);
 static void handleGcError(VmMemory memory, uint64_t address, HeapBlock* block,
-			  const char* details);
+			  const char* details, void* unused);
 
 /** TODO: Add clearVmStatus() to vm operations */
 
@@ -550,6 +554,15 @@ uint64_t getVmPC(UnlambdaVM vm) {
   return vm->pc;
 }
 
+int setVmPC(UnlambdaVM vm, uint64_t address) {
+  if (!isValidVmmAddress(getVmMemory(vm), address)) {
+    setVmStatus(vm, VmIllegalArgumentError, "Invalid address");
+    return -1;
+  }
+  vm->pc = address;
+  return 0;
+}
+
 Stack getVmCallStack(UnlambdaVM vm) {
   return vm->callStack;
 }
@@ -575,41 +588,95 @@ uint8_t* ptrToVmAddress(UnlambdaVM vm, uint64_t address) {
 }
 
 int loadProgramIntoVm(UnlambdaVM vm, const char* filename, int loadSymbols) {
-  const char* errMsg = NULL;
-  int result = loadVmProgramImage(filename, vm, loadSymbols, &errMsg);
-
-  if (!result) {
-    vm->state = VmStateReady;
-    assert(!errMsg);
-    return 0;
-  } else if (result == VmImageIllegalArgumentError) {
-    char msg[200];
-    snprintf(msg, sizeof(msg), "Error calling loadVmProgramImage(): %s",
-	     errMsg);
-    setVmStatus(vm, VmFatalError, msg);
-  } else if (result == VmImageProgramAlreadyLoadedError) {
-    setVmStatus(vm, VmProgramAlreadyLoadedError, errMsg);
-  } else if (result == VmImageIOError) {
-    char msg[200];
-    snprintf(msg, sizeof(msg), "Error loading %s (%s)", filename, errMsg);
-    setVmStatus(vm, VmIOError, msg);
-  } else if (result == VmImageFormatError) {
-    char msg[200];
-    snprintf(msg, sizeof(msg), "Error loading %s (%s)", filename, errMsg);
-    setVmStatus(vm, VmBadProgramImageError, msg);
+  if (vm->state != VmStateNoProgram) {
+    setVmStatus(vm, VmProgramAlreadyLoadedError,
+		"Program already loaded into VM");
+    return -1;
   } else {
-    char msg[200];
-    snprintf(msg, sizeof(msg),
-	     "Error loading %s (loadVmProgramImage() returned unknown "
-	     "status code %d and error message \"%s\"", filename, result,
-	     errMsg);
-    setVmStatus(vm, VmBadProgramImageError, msg);
+    const char* errMsg = NULL;
+    int result = loadVmProgramImage(filename, vm, loadSymbols, &errMsg);
+
+    if (!result) {
+      vm->state = VmStateReady;
+      assert(!errMsg);
+      return 0;
+    } else if (result == VmImageIllegalArgumentError) {
+      char msg[200];
+      snprintf(msg, sizeof(msg), "Error calling loadVmProgramImage(): %s",
+	       errMsg);
+      setVmStatus(vm, VmFatalError, msg);
+    } else if (result == VmImageProgramAlreadyLoadedError) {
+      setVmStatus(vm, VmProgramAlreadyLoadedError, errMsg);
+    } else if (result == VmImageIOError) {
+      char msg[200];
+      snprintf(msg, sizeof(msg), "Error loading %s (%s)", filename, errMsg);
+      setVmStatus(vm, VmIOError, msg);
+    } else if (result == VmImageFormatError) {
+      char msg[200];
+      snprintf(msg, sizeof(msg), "Error loading %s (%s)", filename, errMsg);
+      setVmStatus(vm, VmBadProgramImageError, msg);
+    } else {
+      char msg[200];
+      snprintf(msg, sizeof(msg),
+	       "Error loading %s (loadVmProgramImage() returned unknown "
+	       "status code %d and error message \"%s\"", filename, result,
+	       errMsg);
+      setVmStatus(vm, VmBadProgramImageError, msg);
+    }
+  
+    if (errMsg) {
+      free((void*)errMsg);
+    }
+    return -1;
+  }
+}
+
+int loadVmProgramFromMemory(UnlambdaVM vm, const char* name,
+			    const uint8_t* program, uint64_t programSize) {
+  VmMemory memory = getVmMemory(vm);
+
+  if (vm->state != VmStateNoProgram) {
+    setVmStatus(vm, VmProgramAlreadyLoadedError,
+		"Program already loaded into VM");
+    return -1;
   }
   
-  if (errMsg) {
-    free((void*)errMsg);
+  if (!getVmmProgramMemorySize(memory)) {
+    /** Set the program area to be equal to the program size */
+    if (reserveVmMemoryForProgram(memory, programSize)) {
+      if (getVmmStatus(memory) == VmmNotEnoughMemoryError) {
+	setVmStatus(vm, VmOutOfMemoryError, getVmmStatusMsg(memory));
+      } else {
+	char msg[200];
+	snprintf(msg, sizeof(msg),
+		 "reserveMemoryForProgram() returned unknown or unexpected "
+		 "error code %d (%s)", getVmmStatus(memory),
+		 getVmmStatusMsg(memory));
+	setVmStatus(vm, VmFatalError, msg);
+      }
+      return -1;
+    }
+  } else if (programSize > getVmmProgramMemorySize(memory)) {
+    /** Configured program area isn't big enough */
+    char msg[200];
+    snprintf(msg, sizeof(msg),
+	     "Cannot store a program of %" PRIu64 " bytes in a program area "
+	     "of %" PRIu64 " bytes", programSize,
+	     getVmmProgramMemorySize(memory));
+    setVmStatus(vm, VmIllegalArgumentError, msg);
+    return -1;
   }
-  return -1;
+
+  assert(getVmmProgramMemorySize(memory) >= programSize);
+
+  /** Copy the program and fill any remaining bytes with HALT instructions */
+  memcpy(getProgramStartInVmm(memory), program, programSize);
+  memset(getProgramStartInVmm(memory) + programSize, HALT_INSTRUCTION,
+	 getVmmProgramMemorySize(memory) - programSize);
+
+  vm->programName = strdup(name);
+  vm->state = VmStateReady;
+  return 0;
 }
 
 int stepVm(UnlambdaVM vm) {
@@ -719,11 +786,13 @@ static int executePushInstruction(UnlambdaVM vm) {
     return -1;
   }
 
+  // TODO: Fix this for architectures that can't handle unaligned reads
+  ++p;
   if (pushToAddressStack(vm, *(uint64_t*)p)) {
     return -1;
   }
 
-  vm->pc += 9;  /** Instruction plus 8-byte operand */
+  vm->pc += 9;  
   return 0;
 }
 
@@ -754,10 +823,12 @@ static int executeDupInstruction(UnlambdaVM vm) {
     if (status == StackUnderflowError) {
       setVmStatus(vm, VmAddressStackUnderflowError,
 		  "Cannot DUP the top of an empty stack");
-    } else if (status == VmAddressStackOverflowError) {
-      setVmStatus(vm, VmAddressStackOverflowError,
-		  "Address stack overflow");
+    } else if (status == StackOverflowError) {
+      setVmStatus(vm, VmAddressStackOverflowError, "Address stack overflow");
     } else {
+      if (status != StackMemoryAllocationFailedError) {
+	printf("status = %d\n", status);
+      }
       assert(status == StackMemoryAllocationFailedError);
       setVmStatus(vm, VmFatalError,
 		  "Cannot allocate more memory for the address stack");
@@ -776,8 +847,23 @@ static int executePCallInstruction(UnlambdaVM vm) {
     return -1;
   }
 
+  if (!isValidVmmAddress(vm->memory, target)) {
+    // Call to invalid address
+    char details[200];
+    snprintf(details, sizeof(details), "PCALL to invalid address 0x%" PRIx64,
+	     target);
+    setVmStatus(vm, VmIllegalAddressError, details);
+
+    // Put the address back onto the address stack
+    assert(!pushToAddressStack(vm, target));
+    return -1;
+  }
+
   if (pushToCallStack(vm, target)
         || pushToCallStack(vm, vm->pc + 1)) {
+    // Push the address back onto the address stack.  Since we just popped
+    // it, there should be space for it
+    assert(!pushToAddressStack(vm, target));
     return -1;
   }
 
@@ -797,14 +883,28 @@ static int executeReturnInstruction(UnlambdaVM vm) {
   return 0;
 }
 
+/** For all of the MK* instructions, or any instruction that pops arguments
+ *  from the stack, allocates a code or state block, and then references
+ *  those arguments in the generated code, do not pop the values from the
+ *  stack until after the allocation is complete, or the garbage collector
+ *  may collect the blocks referenced by the popped arguments before the
+ *  new code or state block is constructed, leaving those blocks pointing
+ *  to free blocks.  Instead, use readFromAddressStackTop() to read the
+ *  arguments from the address stack without popping them, then construct
+ *  the code or state block, then pop the values if successful.
+ */
 static int executeMkkInstruction(UnlambdaVM vm) {
   uint64_t arg = 0;
 
-  if (popFromAddressStack(vm, &arg)) {
+  if (readFromAddressStackTop(vm, 0, &arg)) {
+    /** Error code set by readFromAddressStackTop() */
     return -1;    
   }
 
   CodeBlock* f = allocateCodeBlock(vm, "MKK", 12);
+  if (!f) {
+    return -1;
+  }
 
   f->code[0] = PCALL_INSTRUCTION;
   f->code[1] = POP_INSTRUCTION;
@@ -812,9 +912,11 @@ static int executeMkkInstruction(UnlambdaVM vm) {
   *(uint64_t*)(f->code + 3) = arg;
   f->code[11] = RET_INSTRUCTION;
 
-  /** Just popped 8 bytes, so this should always succeed */
-  assert(!pushToAddressStack(vm,
-			     vmmAddressForPtr(vm->memory, (uint8_t*)f)));
+  /** Just read 8 bytes, so this should always succeed */
+  /** TODO: Create a replaceStackTop() operation to replace POP + PUSH */
+  assert(!popFromAddressStack(vm, NULL));
+  assert(!pushToAddressStack(vm, vmmAddressForPtr(vm->memory, f->code)));
+
   ++(vm->pc);
   return 0;
 }
@@ -822,7 +924,7 @@ static int executeMkkInstruction(UnlambdaVM vm) {
 static int executeMks0Instruction(UnlambdaVM vm) {
   uint64_t arg = 0;
 
-  if (popFromAddressStack(vm, &arg)) {
+  if (readFromAddressStackTop(vm, 0, &arg)) {
     return -1;    
   }
   
@@ -836,9 +938,9 @@ static int executeMks0Instruction(UnlambdaVM vm) {
   f->code[10] = MKS1_INSTRUCTION;
   f->code[11] = RET_INSTRUCTION;
 
-  /** Just popped 8 bytes, so this should always succeed */
-  assert(!pushToAddressStack(vm,
-			     vmmAddressForPtr(vm->memory, (uint8_t*)f)));
+  /** Just read 8 bytes, so these should always succeed */
+  assert(!popFromAddressStack(vm, NULL));
+  assert(!pushToAddressStack(vm, vmmAddressForPtr(vm->memory, f->code)));
 
   ++(vm->pc);
   return 0;
@@ -847,7 +949,8 @@ static int executeMks0Instruction(UnlambdaVM vm) {
 static int executeMks1Instruction(UnlambdaVM vm) {
   uint64_t u = 0, v = 0;
 
-  if (popFromAddressStack(vm, &u) || popFromAddressStack(vm, &v)) {
+  if (readFromAddressStackTop(vm, 0, &u)
+        || readFromAddressStackTop(vm, 1, &v)) {
     return -1;
   }
 
@@ -858,18 +961,20 @@ static int executeMks1Instruction(UnlambdaVM vm) {
   f->code[0] = PCALL_INSTRUCTION; /** Evaluate w = z() */
   f->code[1] = DUP_INSTRUCTION;   /** Duplicate w */
   f->code[2] = PUSH_INSTRUCTION;  /** Push v */
-  *(uint64_t*)(f + 3) = v;
+  *(uint64_t*)(f->code + 3) = v;
   f->code[11] = MKS2_INSTRUCTION; /** Create q = lambda.v(w) */
   f->code[12] = SWAP_INSTRUCTION; /** Swap q and w */
   f->code[13] = PUSH_INSTRUCTION; /** Push u */
-  *(uint64_t*)(f + 14) = u;
+  *(uint64_t*)(f->code + 14) = u;
   f->code[22] = PCALL_INSTRUCTION; /** Compute a = u(w) */
   f->code[23] = PCALL_INSTRUCTION; /** Compute a(q) */
   f->code[24] = RET_INSTRUCTION;
 
-  /** Just popped 16 bytes, so pushing 8 should succeed */
-  assert(!pushToAddressStack(vm,
-			     vmmAddressForPtr(vm->memory, (uint8_t*)f)));
+  /** Just read 16 bytes, so popping16 and pushing 8 should succeed */
+  const uint64_t codeAddr = vmmAddressForPtr(vm->memory, f->code);
+  assert(!popFromAddressStack(vm, NULL));
+  assert(!popFromAddressStack(vm, NULL));
+  assert(!pushToAddressStack(vm, codeAddr));
 
   ++(vm->pc);
   return 0;
@@ -878,7 +983,8 @@ static int executeMks1Instruction(UnlambdaVM vm) {
 static int executeMks2Instruction(UnlambdaVM vm) {
   uint64_t u = 0, v = 0;
 
-  if (popFromAddressStack(vm, &u) || popFromAddressStack(vm, &v)) {
+  if (readFromAddressStackTop(vm, 0, &u)
+        || readFromAddressStackTop(vm, 1, &v)) {
     return -1;
   }
 
@@ -887,12 +993,16 @@ static int executeMks2Instruction(UnlambdaVM vm) {
     return -1;
   }
   f->code[0] = PUSH_INSTRUCTION;
-  *(uint64_t*)(f + 1) = v;
+  *(uint64_t*)(f->code + 1) = v;
   f->code[9] = PUSH_INSTRUCTION;
-  *(uint64_t*)(f + 10) = u;
+  *(uint64_t*)(f->code + 10) = u;
   f->code[18] = PCALL_INSTRUCTION;
   f->code[19] = RET_INSTRUCTION;
 
+  assert(!popFromAddressStack(vm, NULL));
+  assert(!popFromAddressStack(vm, NULL));
+  assert(!pushToAddressStack(vm, vmmAddressForPtr(vm->memory, f->code)));
+  
   ++(vm->pc);
   return 0;
 }
@@ -900,7 +1010,7 @@ static int executeMks2Instruction(UnlambdaVM vm) {
 static int executeMkdInstruction(UnlambdaVM vm) {
   uint64_t arg = 0;
 
-  if (popFromAddressStack(vm, &arg)) {
+  if (readFromAddressStackTop(vm, 0, &arg)) {
     return -1;
   }
 
@@ -909,7 +1019,7 @@ static int executeMkdInstruction(UnlambdaVM vm) {
     return -1;
   }
   f->code[0] = PUSH_INSTRUCTION;
-  *(uint64_t*)(f + 1) = arg;
+  *(uint64_t*)(f->code + 1) = arg;
   f->code[9] = PCALL_INSTRUCTION;
   f->code[10] = SWAP_INSTRUCTION;
   f->code[11] = PCALL_INSTRUCTION;
@@ -917,6 +1027,10 @@ static int executeMkdInstruction(UnlambdaVM vm) {
   f->code[13] = PCALL_INSTRUCTION;
   f->code[14] = RET_INSTRUCTION;
 
+  // Just read 8 bytes, so this should succeed
+  assert(!popFromAddressStack(vm, NULL));
+  assert(!pushToAddressStack(vm, vmmAddressForPtr(vm->memory, f->code)));
+  
   ++(vm->pc);
   return 0;
 }
@@ -924,7 +1038,7 @@ static int executeMkdInstruction(UnlambdaVM vm) {
 static int executeMkcInstruction(UnlambdaVM vm) {
   uint64_t savedState = 0;
 
-  if (popFromAddressStack(vm, &savedState)) {
+  if (readFromAddressStackTop(vm, 0, &savedState)) {
     return -1;
   }
 
@@ -940,6 +1054,10 @@ static int executeMkcInstruction(UnlambdaVM vm) {
   f->code[11] = 1;
   f->code[12] = RET_INSTRUCTION;
 
+  // Just read 8 bytes, so this should succeed
+  assert(!popFromAddressStack(vm, NULL));
+  assert(!pushToAddressStack(vm, vmmAddressForPtr(vm->memory, f->code)));
+  
   ++(vm->pc);
   return 0;
 }
@@ -954,24 +1072,25 @@ static int executeSaveInstruction(UnlambdaVM vm) {
   }
   
   VmStateBlock* const state = allocateVmStateBlock(
-      vm, "SAVE", stackSize(vm->callStack), stackSize(vm->addressStack) - skip
+      vm, "SAVE", stackSize(vm->callStack) / 16,
+      (stackSize(vm->addressStack) / 8) - skip
   );
   if (!state) {
     return -1;
   }
 
   uint8_t* const addressStackStart =
-      state->stacks + 16 * stackSize(vm->callStack);
-  uint8_t* const addressStackEnd =
-    addressStackStart + 8 * (stackSize(vm->addressStack) - skip);
+      state->stacks + stackSize(vm->callStack);
 
   memcpy((void*)state->stacks, (const void*)bottomOfStack(vm->callStack),
-	 16 * stackSize(vm->callStack));
+	 stackSize(vm->callStack));
   memcpy((void*)addressStackStart, (const void*)bottomOfStack(vm->addressStack),
-	 8 * (stackSize(vm->addressStack) - skip));
+	 stackSize(vm->addressStack) - (8 * skip));
 
-  if (!pushToAddressStack(vm,
-			  vmmAddressForPtr(vm->memory, (uint8_t*)state))) {
+  // Address of state block's data goes on stack.  
+  const uint64_t stateAddr = vmmAddressForPtr(vm->memory, (uint8_t*)state)
+                               + sizeof(HeapBlock);
+  if (pushToAddressStack(vm, stateAddr)) {
     /** Don't worry about the allocated state block.  Either the VM will exit
      *  or garbage collection will free it
      */
@@ -1146,12 +1265,25 @@ static int popFromCallStack(UnlambdaVM vm, uint64_t* addr) {
 			       "Call stack underflow");
 }
 
+static int readFromAddressStackTop(UnlambdaVM vm, uint64_t depth,
+				   uint64_t* value) {
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t offset = (depth + 1) * 8;
+  if ((offset < (depth + 1)) || (offset > stackSize(addressStack))) {
+    setVmStatus(vm, VmAddressStackUnderflowError, "Address stack underflow");
+    return -1;
+  }
+
+  *value = *(uint64_t*)(topOfStack(addressStack) - offset);
+  return 0;
+}
+
 static CodeBlock* allocateCodeBlock(UnlambdaVM vm, const char* instruction,
 				    uint64_t size) {
  CodeBlock* f = allocateVmmCodeBlock(vm->memory, size);
   if (!f) {
     if (collectUnreachableVmmBlocks(vm->memory, vm->callStack, vm->addressStack,
-				    vm->gcErrorHandler)) {
+				    vm->gcErrorHandler, NULL)) {
       /** If collection fails, the heap is corrupt, so indicate we could
        *  not allocate the code block on the heap
        */
@@ -1171,7 +1303,7 @@ static CodeBlock* allocateCodeBlock(UnlambdaVM vm, const char* instruction,
 
     if (!f) {
       reportBlockAllocationFailure(vm, instruction, size,
-				   "Maximum heap size exceeded");
+				   "Maximum memory size exceeded");
       return NULL;
     }
   }
@@ -1188,7 +1320,7 @@ static VmStateBlock* allocateVmStateBlock(UnlambdaVM vm,
   
   if (!b) {
     if (collectUnreachableVmmBlocks(vm->memory, vm->callStack, vm->addressStack,
-				    vm->gcErrorHandler)) {
+				    vm->gcErrorHandler, NULL)) {
       /** If collection fails, the heap is corrupt, so indicate we could
        *  not allocate the code block on the heap
        */
@@ -1208,10 +1340,11 @@ static VmStateBlock* allocateVmStateBlock(UnlambdaVM vm,
 
     if (!b) {
       reportBlockAllocationFailure(vm, instruction, size,
-				   "Maximum heap size exceeded");
+				   "Maximum memory size exceeded");
       return NULL;
     }
   }
+  printf("Allocated state block of size %" PRIu64 "\n", size);
   return b;
 }
 
@@ -1227,7 +1360,7 @@ static void reportBlockAllocationFailure(UnlambdaVM vm,
 }
 
 static void handleGcError(VmMemory memory, uint64_t address, HeapBlock* block,
-			  const char* details) {
+			  const char* details, void* unused) {
   char msg[1000];
   snprintf(msg, sizeof(msg),
 	   "**GC ERROR at address 0x%" PRIX64 " (block size=0x%" PRIu64

@@ -64,14 +64,14 @@ static FreeBlock* findFreeBlockWithSize(VmMemory memory, uint64_t size,
 					FreeBlock** prevFree);
 static HeapBlock* splitFreeBlock(VmMemory memory, FreeBlock* block,
 				 FreeBlock* prev, uint64_t size);
-static void visitBlock(VmMemory memory, HeapBlock* block,
-		       GcErrorHandler errorHandler);
+static void visitBlock(VmMemory memory, uint64_t address,
+		       GcErrorHandler errorHandler, void* errorContext);
 static void visitCodeBlock(VmMemory memory, CodeBlock* block,
-			   GcErrorHandler errorHandler);
+			   GcErrorHandler errorHandler, void* errorContext);
 static void visitVmStateBlock(VmMemory memory, VmStateBlock* block,
-			      GcErrorHandler errorHandler);
-static int collectUnmarkedBlocks(VmMemory memory,
-				 GcErrorHandler errorHandler);
+			      GcErrorHandler errorHandler, void* errorContext);
+static int collectUnmarkedBlocks(VmMemory memory, GcErrorHandler errorHandler,
+				 void* errorContext);
 
 static uint64_t alignTo8(uint64_t v) {
   return (v + 7) & ~(uint64_t)7;
@@ -238,7 +238,8 @@ int reserveVmMemoryForProgram(VmMemory memory, uint64_t size) {
     /** Update the # of bytes free and write a free block covering the whole
      *  heap.
      */
-    memory->bytesFree = currentVmmSize(memory) - alignedSize - sizeof(HeapBlock);
+    memory->bytesFree = currentVmmSize(memory) - alignedSize
+                          - sizeof(HeapBlock);
     memory->firstFree = alignedSize;
     writeFreeBlock(memory->bytes + alignedSize, memory->bytesFree, 0);
   } else {
@@ -302,12 +303,13 @@ HeapBlock* nextHeapBlockInVmm(VmMemory memory, HeapBlock* block) {
 }
 
 HeapBlock* forEachVmmBlock(
-    VmMemory memory, HeapBlock* (*f)(VmMemory, HeapBlock*)
+    VmMemory memory, HeapBlock* (*f)(VmMemory, HeapBlock*, void*),
+    void* context
 ) {
   HeapBlock *block = firstHeapBlockInVmm(memory);
   HeapBlock *result = NULL;
   while (block && !result) {
-    result = f(memory, block);
+    result = f(memory, block, context);
     block = nextHeapBlockInVmm(memory, block);
   }
   return result;
@@ -348,11 +350,12 @@ void setVmmFreeList(VmMemory memory, uint64_t addrOfFirstFreeBlock,
 }
 
 FreeBlock* forEachFreeBlockInVmm(VmMemory memory,
-				 FreeBlock* (*f)(VmMemory, FreeBlock*)) {
+				 FreeBlock* (*f)(VmMemory, FreeBlock*, void*),
+				 void* context) {
   FreeBlock* block = firstFreeBlockInVmm(memory);
   FreeBlock* result = NULL;
   while (block && !result) {
-    result = f(memory, block);
+    result = f(memory, block, context);
     block = nextFreeBlockInVmm(memory, block);
   }
   return result;
@@ -397,64 +400,78 @@ VmStateBlock* allocateVmmStateBlock(VmMemory memory, uint32_t callStackSize,
   return block;
 }
 
-static HeapBlock* clearBlockMark(VmMemory memory, HeapBlock* block) {
+static HeapBlock* clearBlockMark(VmMemory memory, HeapBlock* block,
+				 void* unused) {
+  /* printf("Clear block mark at %lu\n",
+   *        (uint8_t*)block - ptrToVmMemory(memory));
+   */
   clearVmmBlockMark(block);
   return NULL;
 }
 
 int collectUnreachableVmmBlocks(VmMemory memory, Stack callStack,
 				Stack addressStack,
-				GcErrorHandler errorHandler) {
+				GcErrorHandler errorHandler,
+				void* errorContext) {
   /** Clear the marks on all the blocks */
-  forEachVmmBlock(memory, clearBlockMark);
+  forEachVmmBlock(memory, clearBlockMark, NULL);
 
   /** Mark all blocks reachable from the call stack */
   for (uint64_t* p = (uint64_t*)bottomOfStack(callStack);
        p < (uint64_t*)topOfStack(callStack);
        p += 2) {
-    visitBlock(memory, (HeapBlock*)ptrToVmmAddress(memory, *p), errorHandler);
+    /* printf("Visit call stack frame\n"); */
+    visitBlock(memory, *p, errorHandler, errorContext);
   }
 
   /** Mark all blocks reachable from the address stack */
   for (uint64_t* p = (uint64_t*)bottomOfStack(addressStack);
-       p < (uint64_t*)topOfStack;
+       p < (uint64_t*)topOfStack(addressStack);
        ++p) {
-    visitBlock(memory, (HeapBlock*)ptrToVmmAddress(memory, *p), errorHandler);
+    /* printf("Visit address stack frame\n"); */
+    visitBlock(memory, *p, errorHandler, errorContext);
   }
 
-  return collectUnmarkedBlocks(memory, errorHandler);
+  return collectUnmarkedBlocks(memory, errorHandler, errorContext);
 }
 
-static void visitBlock(VmMemory memory, HeapBlock* block,
-		      GcErrorHandler errorHandler) {
-  if (!vmmBlockIsMarked(block)) {
-    const int blockType = getVmmBlockType(block);
+static void visitBlock(VmMemory memory, uint64_t address,
+		       GcErrorHandler errorHandler,
+		       void* errorContext) {
+  if (address >= memory->heapStart) {
+    HeapBlock* block = (HeapBlock*)ptrToVmmAddress(memory,
+						   address - sizeof(HeapBlock));
 
-    setVmmBlockMark(block);
+    if (!vmmBlockIsMarked(block)) {
+      const int blockType = getVmmBlockType(block);
 
-    if (blockType == VmmFreeBlockType) {
-      /** Should not have an address pointing to a free block...*/
-      clearVmmBlockMark(block);
-      errorHandler(memory, vmmAddressForPtr(memory, (uint8_t*)block), block,
-		   "Free block is reachable");
-    } else if (blockType == VmmCodeBlockType) {
-      visitCodeBlock(memory, (CodeBlock*)block, errorHandler);
-    } else if (blockType == VmmStateBlockType) {
-      visitVmStateBlock(memory, (VmStateBlock*)block, errorHandler);
-    } else {
-      char msg[100];
+      setVmmBlockMark(block);
 
-      clearVmmBlockMark(block);
-      snprintf(msg, sizeof(msg), "Unknown block type %u",
-	       (unsigned int)getVmmBlockType(block));
-      errorHandler(memory, vmmAddressForPtr(memory, (uint8_t*)block), block,
-		   msg);
+      if (blockType == VmmFreeBlockType) {
+	/** Should not have an address pointing to a free block...*/
+	clearVmmBlockMark(block);
+	errorHandler(memory, vmmAddressForPtr(memory, (uint8_t*)block), block,
+		     "Free block is reachable", errorContext);
+      } else if (blockType == VmmCodeBlockType) {
+	visitCodeBlock(memory, (CodeBlock*)block, errorHandler, errorContext);
+      } else if (blockType == VmmStateBlockType) {
+	visitVmStateBlock(memory, (VmStateBlock*)block, errorHandler,
+			  errorContext);
+      } else {
+	char msg[100];
+
+	clearVmmBlockMark(block);
+	snprintf(msg, sizeof(msg), "Unknown block type %u",
+		 (unsigned int)getVmmBlockType(block));
+	errorHandler(memory, vmmAddressForPtr(memory, (uint8_t*)block), block,
+		     msg, errorContext);
+      }
     }
   }
 }
 
 static void visitCodeBlock(VmMemory memory, CodeBlock* block,
-			   GcErrorHandler errorHandler) {
+			   GcErrorHandler errorHandler, void* errorContext) {
   uint8_t* p = block->code;
   uint8_t* end = p + getVmmBlockSize((HeapBlock*)block);
 
@@ -464,18 +481,27 @@ static void visitCodeBlock(VmMemory memory, CodeBlock* block,
        *        that don't support unaligned reads
        */
       const uint64_t address = *(uint64_t*)(p + 1);
+      // If the operand lies inside the heap, it is the address of the
+      // block's data, not the header, which is sizeof(HeapBlock) bytes behind.
+      //
+      // Could just call visitBlock with the operand and that would ignore
+      // operands outside the heap, but this gives us extra checking that
+      // if the operand lies inside the heap, it references a code block.
       if (address >= memory->heapStart) {
-	HeapBlock* const q = (HeapBlock*)ptrToVmmAddress(memory, address);
+	HeapBlock* const q = (HeapBlock*)ptrToVmmAddress(
+	  memory, address - sizeof(HeapBlock)
+	);
 	if (!q) {
 	  errorHandler(memory, address, q,
-		       "Operand of PUSH instruction is invalid");
+		       "Operand of PUSH instruction is invalid",
+		       errorContext);
 
 	} else if (getVmmBlockType(q) != VmmCodeBlockType) {
 	  errorHandler(memory, address, q,
 		       "Operand of PUSH instruction does not point to "
-		       "a code block");
+		       "a code block", errorContext);
 	} else {
-	  visitBlock(memory, q, errorHandler);
+	  visitBlock(memory, address, errorHandler, errorContext);
 	}
       }
     }
@@ -487,24 +513,26 @@ static void visitCodeBlock(VmMemory memory, CodeBlock* block,
 }
 
 static void visitVmStateBlock(VmMemory memory, VmStateBlock* block,
-			      GcErrorHandler errorHandler) {
+			      GcErrorHandler errorHandler,
+			      void* errorContext) {
   uint64_t* const callStackEnd =
     (uint64_t*)block->stacks + 2 * (uint64_t)block->callStackSize;
   uint64_t* const addressStackEnd = callStackEnd + block->addressStackSize;
 
   /** Visit all the addresses in the saved call stack */
   for (uint64_t* p = (uint64_t*)block->stacks; p < callStackEnd; p += 2) {
-    visitBlock(memory, (HeapBlock*)ptrToVmmAddress(memory, *p), errorHandler);
+    visitBlock(memory, *p, errorHandler, errorContext);
   }
 
   /** Visit all the addresses in the saved address stack */
   for (uint64_t* p = callStackEnd; p < addressStackEnd; ++p) {
-    visitBlock(memory, (HeapBlock*)ptrToVmmAddress(memory, *p), errorHandler);
+    visitBlock(memory, *p, errorHandler, errorContext);
   }
 }
 
 static int collectUnmarkedBlocks(VmMemory memory,
-				 GcErrorHandler errorHandler) {
+				 GcErrorHandler errorHandler,
+				 void* errorContext) {
   HeapBlock* p = firstHeapBlockInVmm(memory);
   HeapBlock* prev = NULL;
   FreeBlock* prevFree = NULL;
@@ -514,16 +542,29 @@ static int collectUnmarkedBlocks(VmMemory memory,
   
   while (p) {
     /** Get the next block now, since we may overwrite the current block */
-    HeapBlock* const next = nextHeapBlockInVmm(memory, next);
-    assert(nextHeapBlockInVmm(memory, prev) == p);
+    HeapBlock* const next = nextHeapBlockInVmm(memory, p);
+    
+    /**
+    printf("prev = %p, prevFree = %p, p = %p, next = %p\n", prev, prevFree, p,
+           next);
+    if (p) {
+      printf("addr(p) = %lu\n", (uint64_t)((uint8_t*)p - ptrToVmMemory(memory)));
+    } else {
+      printf("addr(p) = (nil)\n");
+    }
+    **/
+    
+    assert(!prev || (nextHeapBlockInVmm(memory, prev) == p));
 
     if (vmmBlockIsMarked(p)) {
+      /* printf("Clear mark\n"); */
       clearVmmBlockMark(p);
       prev = p;
     } else {
-      assert(!vmmBlockIsMarked(prev));
+      assert(!prev || !vmmBlockIsMarked(prev));
       
       if (prev && (getVmmBlockType(prev) == VmmFreeBlockType)) {
+	/* printf("Merge into prior free block\n"); */
 	/** prev should be at the end of the free list */
 	assert((HeapBlock*)prevFree == prev);
 	assert(((FreeBlock*)prev)->next == 0);
@@ -533,6 +574,7 @@ static int collectUnmarkedBlocks(VmMemory memory,
 	setVmmBlockSize(prev, getVmmBlockSize(prev) + blockSize);
 	memory->bytesFree += blockSize;
       } else {
+	/* printf("Change to free block\n"); */
 	/** Change to free block */
 	assert(getVmmBlockSize(p) >= 8);
 	
@@ -556,10 +598,12 @@ static int collectUnmarkedBlocks(VmMemory memory,
     p = next;
   }
 
+  /* printf("Done collecting free blocks\n"); */
   assert(!(prev && nextHeapBlockInVmm(memory, prev)));
 
   if (1) {
     /** Verify that sum of memory in free blocks equals memory->bytesFree */
+    /* printf("Verify free byte count\n"); */
     FreeBlock *q = firstFreeBlockInVmm(memory);
     uint64_t bytesFree = 0;
     
@@ -569,14 +613,20 @@ static int collectUnmarkedBlocks(VmMemory memory,
     }
 
     if (bytesFree != memory->bytesFree) {
+      /**
+      printf("memory->bytesFree = %lu, sum of free blocks = %lu.  "
+	     "Signaling error.\n", memory->bytesFree, bytesFree);
+       **/
       char msg[200];
       snprintf(msg, sizeof(msg),
 	       "After garbage collection, memory->bytesFree is %lu, but "
 	       "total number of bytes in free blocks is %lu",
 	       memory->bytesFree, bytesFree);
-      errorHandler(memory, 0, NULL, msg);
+      errorHandler(memory, 0, NULL, msg, errorContext);
     }
   }
+
+  return 0;
 }
 
 static int ptrOutOfBounds(VmMemory memory, uint8_t* p) {
@@ -684,7 +734,17 @@ int increaseVmmSize(VmMemory memory) {
    *  free list.
    */
   FreeBlock* p = firstFreeBlockInVmm(memory);
-  if (p) {
+  if (!p) {
+    /** There were no free blocks on the heap, so write one at the end
+     *  of the old heap and point the free block pointer to it
+     */
+      writeFreeBlock(memory->bytes + currentSize,
+		     newSize - currentSize - sizeof(HeapBlock), 0);
+      memory->firstFree = currentSize;
+
+      /** Account for the header of the new block */
+      memory->bytesFree -= sizeof(HeapBlock);    
+  } else {
     FreeBlock* next = nextFreeBlockInVmm(memory, p);
 
     while (next) {

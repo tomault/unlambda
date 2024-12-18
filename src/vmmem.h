@@ -185,13 +185,15 @@ HeapBlock* nextHeapBlockInVmm(VmMemory memory, HeapBlock* block);
  *    memory   Memory whose blocks should be iterated over
  *    f        Function to call on each block.  A non-NULL result will
  *                 terminate execution of the loop and return that value.
+ *    context  Value to pass as third argument to f
  *
  *  Returns:
  *    The value returned by the last call to f.
  */
 HeapBlock* forEachVmmBlock(
     VmMemory memory,
-    HeapBlock* (*f)(VmMemory, HeapBlock*)
+    HeapBlock* (*f)(VmMemory, HeapBlock*, void*),
+    void* context
 );
 
 /** Return the first free block on the heap, or NULL if no free blocks */
@@ -208,12 +210,14 @@ FreeBlock* nextFreeBlockInVmm(VmMemory memory, FreeBlock* block);
  *    memory   The memory whose free blocks should be iterated over
  *    f        Function to call on each new block.  A non-NULL return value
  *                 will terminate the loop and return that value.
+ *    context  Passed as the third argument to f
  *
  *  Returns:
  *    The value returned by the last call to f.
  */
 FreeBlock* forEachFreeBlockInVmm(VmMemory memory,
-				 FreeBlock* (*f)(VmMemory, FreeBlock*));
+				 FreeBlock* (*f)(VmMemory, FreeBlock*, void*),
+				 void* context);
 
 /** Allocate a block for code
  *
@@ -251,9 +255,10 @@ VmStateBlock* allocateVmmStateBlock(VmMemory memory, uint32_t callStackSize,
  *  * The address in VmMemory of the block where the error occurred
  *  * A pointer to the HeapBlock at that address
  *  * A message describing the error
+ *  * The error context passed to collectUnreachableVmmBlocks
  */
 typedef void (*GcErrorHandler)(VmMemory, uint64_t, HeapBlock*,
-			       const char*);
+			       const char*, void*);
 
 /** Collect all unreachable blocks and return them to the heap
  *
@@ -280,6 +285,10 @@ typedef void (*GcErrorHandler)(VmMemory, uint64_t, HeapBlock*,
  *      A function the garbage collector will call when it encounters an
  *      error.
  *
+ *    errorContext:
+ *      Value passed as-is to the error handler when collectUnreachableVmmBlocks
+ *      calls it
+ *
  *  Returns:
  *    0 if collection was successful or a nonzero value if collection failed
  *    for some reason.  The current implementation always returns 0, but
@@ -291,7 +300,8 @@ typedef void (*GcErrorHandler)(VmMemory, uint64_t, HeapBlock*,
  */
 int collectUnreachableVmmBlocks(VmMemory memory, Stack callStack,
 				Stack addressStack,
-				GcErrorHandler errorHandler);
+				GcErrorHandler errorHandler,
+				void* errorContext);
 
 /** Increase the size of the memory, up to its maximum size
  *
