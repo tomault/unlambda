@@ -2,6 +2,7 @@
 #define __UNLAMBDA__TESTING_UTILS_HPP__
 
 extern "C" {
+#include <array.h>
 #include <stack.h>
 #include <vm_instructions.h>
 #include <vmmem.h>
@@ -14,6 +15,8 @@ extern "C" {
 #include <vector>
 
 #include <stdint.h>
+
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
 namespace unlambda {
   namespace testing {
@@ -125,6 +128,23 @@ namespace unlambda {
 			 const uint64_t* callStackData,
 			 uint32_t addressStackSize,
 			 const uint64_t* addressStackData);
+
+    /** Push "size" 8-byte values from "data" onto the stack "s", checking
+     *  for errors as each value is pushed
+     *
+     *  Arguments:
+     *    s     Stack to push values onto
+     *    data  Values to push, in order
+     *    size  Number of values to push
+     *
+     *  Returns:
+     *    ::testing::AssertionSuccess() if all values were pushed onto the stack
+     *    ::testing::AssertionFailure() if an error occurred
+     *  Throws:
+     *    Nothing
+     */
+    ::testing::AssertionResult pushOntoStack(Stack s, const uint64_t* data,
+					     uint64_t size);
 
     /** Dump the blocks on the heap to standard output
      *
@@ -259,7 +279,108 @@ namespace unlambda {
       const std::string& context, const uint8_t* program,
       const uint8_t* truth, uint64_t length
     );
+
+    /** Verify the size and content of a stack
+     *
+     *  Arguments:
+     *    name      Name for the stack (appears in error messages)
+     *    s         The stack to verify
+     *    trueData  Expected stack content, from bottom to top
+     *    trueSize  Expected stack size, in number of 8-byte values
+     *
+     *  Returns:
+     *   ::testing::AssertionSuccess if "s" has size "trueSize" and contents
+     *     "trueData"
+     *   ::testing::AssertionFailure if the size or content of "s" does
+     *     not match "trueSize" or "trueData"
+     *
+     *  Throws:
+     *    Nothing
+     */
+    ::testing::AssertionResult verifyStack(
+      const std::string& name, Stack s, const uint64_t* trueData,
+      uint64_t trueSize
+    );
+
+    /** Verify the contents of the state block at "p"
+     *
+     *  Verifies the guard, the sizes of the saved address and call stacks
+     *  and the contents of those stacks.
+     *
+     *  The state block pointer "p" should point to the data portion of
+     *  the saved state block, not the header.  The verifyStateBlock()
+     *  function will adjust it to point to the block's header.
+     *
+     *  Arguments:
+     *    p                      Pointer to data area of state block to verify
+     *    trueCallStackData      Expected content of the call stack.  Should
+     *                             be 16 * trueCallStackSize bytes long.
+     *    trueCallStackSize      Expected size of the call stack, in frames
+     *    trueAddressStackData   Expected content of the address stack.
+     *                             Should be 8 * trueAddressStackSize bytes
+     *                             long.
+     *    trueAddressStackSize   Expected size of the address stack, in
+     *                             number of 8-byte addresses
+     *
+     *  Returns:
+     *    ::testing::AssertionSuccess if the saved state's guard contains
+     *      the correct bytes, the address and stack sizes match their expected
+     *      sizes, and the contents of the address and stack sizes match their
+     *      expected content.
+     *    ::testing::AssertionFailure if any of those conditions are not met
+     *
+     *  Throws:
+     *    Nothing
+     */
+    ::testing::AssertionResult verifyStateBlock(
+      const uint8_t* p, const uint64_t* trueCallStackData,
+      const uint64_t trueCallStackSize, const uint64_t* trueAddressStackData,
+      const uint64_t trueAddressStackSize
+    );
+
+    /** Create and initialize an array
+     *
+     *  The initial size of the array will be "size * sizeof(T)" bytes and
+     *  the maximum size will be "maxSize * sizeof(T)" in bytes.
+     *
+     *  Arguments:
+     *    content    The initial content of the array
+     *    size       Number of items in "content."
+     *    maxSize    Maximum size, in number of items of size sizeof(T).
+     *
+     *  Returns:
+     *    The new array, if successful, or NULL if array creation failed.
+     */
+    template <typename T>
+    Array createAndInitArray(const T* content, size_t size, size_t maxSize) {
+      Array a = createArray(size * sizeof(T), maxSize * sizeof(T));
+      if (a) {
+	::memcpy(startOfArray(a), content, size * sizeof(T));
+      }
+      return a;
+    }
     
+    /** Verify the contents of an array
+     *
+     *  Verifies the array has the correct size and content
+     *
+     *  Arguments:
+     *    a         The array to verify
+     *    trueData  It's expected content
+     *    trueSize  It's expected size
+     *
+     *  Returns:
+     *    ::testing::AssertionSuccess if the array has the exppected content
+     *    and size, or ::testing::AssertionFailure if it does not.
+     *
+     *  Throws:
+     *    Nothing
+     */
+    ::testing::AssertionResult verifyArray(Array a, const uint8_t* trueData,
+					   const uint64_t trueSize);
+
+    /** Dump the contents of array "a" to stdout */
+    void dumpArray(Array a);
   }
 }
 

@@ -1,5 +1,10 @@
+extern "C" {
+#include <vm_instructions.h>
+}
+
 #include "testing_utils.hpp"
 #include <assert.h>
+#include <sstream>
 
 extern "C" {
 /** Not part of the VmMemory public API.  Used only for testing */
@@ -8,6 +13,55 @@ void setVmmFreeList(VmMemory memory, uint64_t addrOfFirstFreeBlock,
 }
 
 namespace unl_test = unlambda::testing;
+
+namespace {
+  std::string toString(Stack s) {
+    std::ostringstream msg;
+    msg << "[";
+    for (const uint64_t* p = reinterpret_cast<uint64_t*>(bottomOfStack(s));
+	 p != reinterpret_cast<const uint64_t*>(topOfStack(s));
+	 ++p) {
+      if (p != reinterpret_cast<const uint64_t*>(bottomOfStack(s))) {
+	msg << ",";
+      }
+      msg << " " << *p;
+    }
+    msg << " ]";
+    return msg.str();
+  }
+
+  template <typename T>
+  std::string toString(const T* data, uint64_t size) {
+    std::ostringstream msg;
+    const T* const end = data + size;
+
+    msg << "[";
+    for (auto p = data; p != end; ++p) {
+      if (p != data) {
+	msg << ",";
+      }
+      msg << " " << *p;
+    }
+    msg << " ]";
+    return msg.str();
+  }
+
+  // Need a specialization to keep byte data from being printed as characters
+  std::string toString(const uint8_t* data, uint64_t size) {
+    std::ostringstream msg;
+    const uint8_t* const end = data + size;
+
+    msg << "[";
+    for (auto p = data; p != end; ++p) {
+      if (p != data) {
+	msg << ",";
+      }
+      msg << " " << (uint32_t)*p;
+    }
+    msg << " ]";
+    return msg.str();
+  }
+}
 
 ::testing::AssertionResult unl_test::verifyProgram(const std::string& context,
 						   const uint8_t* program,
@@ -66,6 +120,9 @@ void unl_test::layoutBlocks(VmMemory memory,
       lastFreeBlock = reinterpret_cast<FreeBlock*>(p);
       lastFreeBlock->next = 0;
       bytesFree += block.blockSize;
+    } else {
+      uint8_t* data = reinterpret_cast<uint8_t*>(hp) + sizeof(HeapBlock);
+      ::memset(data, 0, block.blockSize);
     }
     block.address = vmmAddressForPtr(memory, p);
     p += block.blockSize + sizeof(HeapBlock);
@@ -109,6 +166,20 @@ void unl_test::writeStateBlock(uint8_t* p, uint32_t callStackSize,
   ::memcpy(sbp->stacks, callStackData, 16 * callStackSize);
   ::memcpy(sbp->stacks + 16 * callStackSize, addressStackData,
 	   8 * addressStackSize);
+}
+
+::testing::AssertionResult unl_test::pushOntoStack(Stack s,
+						   const uint64_t* data,
+						   uint64_t size) {
+  for (uint64_t i = 0; i < size; ++i) {
+    if (pushStack(s, (const void*)&data[i], sizeof(uint64_t))) {
+      return ::testing::AssertionFailure()
+	<< "Failed to push data[" << i << "] = " << data[i]
+	<< "into the stack (" << std::string(getStackStatusMsg(s)) << ")";
+    }
+  }
+
+  return ::testing::AssertionSuccess();
 }
 
 void unl_test::dumpHeapBlocks(VmMemory memory) {
@@ -282,8 +353,100 @@ void unl_test::handleCollectorError(VmMemory memory, uint64_t address,
   return ::testing::AssertionSuccess();
 }
 
+::testing::AssertionResult unl_test::verifyStack(
+  const std::string& name, Stack s, const uint64_t* trueData,
+  uint64_t trueSize
+) {
+  if (stackSize(s) != (8 * trueSize)) {
+    return ::testing::AssertionFailure()
+      << "The size of the " << name << " is incorrect.  It is "
+      << stackSize(s) << ", but it should be " << (8 * trueSize);
+  }
 
+  const uint64_t* bottom = reinterpret_cast<const uint64_t*>(bottomOfStack(s));
+  for (int i = 0; i < trueSize; ++i) {
+    if (bottom[i] != trueData[i]) {
+      return ::testing::AssertionFailure()
+	<< "Content of " << name << " is incorrect.  It is "
+	<< toString(s)  << ", but it should be "
+	<< toString(trueData, trueSize);
+    }
+  }
 
+  return ::testing::AssertionSuccess();
+}
 
+::testing::AssertionResult unl_test::verifyStateBlock(
+  const uint8_t* p, const uint64_t* trueCallStackData,
+  const uint64_t trueCallStackSize, const uint64_t* trueAddressStackData,
+  const uint64_t trueAddressStackSize
+) {
+  const VmStateBlock* sb =
+    reinterpret_cast<const VmStateBlock*>(p - sizeof(HeapBlock));
 
+  // Verify the guard contains PANIC instructions
+  for (int i = 0; i < sizeof(sb->guard); ++i) {
+    if (sb->guard[i] != PANIC_INSTRUCTION) {
+      return ::testing::AssertionFailure()
+	<< "The guard is " << toString(sb->guard, sizeof(sb->guard))
+	<< ", but it should consist entirely of "
+	<< (uint32_t)PANIC_INSTRUCTION << " bytes";
+    }
+  }
 
+  // Verify the call stack size and content
+  if (sb->callStackSize != trueCallStackSize) {
+    return ::testing::AssertionFailure()
+      << "The call stack has size " << sb->callStackSize
+      << ", but it should have size " << trueCallStackSize;
+  }
+
+  const uint64_t* callStackData = reinterpret_cast<const uint64_t*>(sb->stacks);
+  if (::memcmp(callStackData, trueCallStackData, 16 * trueCallStackSize)) {
+    return ::testing::AssertionFailure()
+      << "The saved call stack is "
+      << toString(callStackData, sb->callStackSize) << ", but it should be "
+      << toString(trueCallStackData, trueCallStackSize);
+  }
+  
+  // Verify the address stack size and content
+  if (sb->addressStackSize != trueAddressStackSize) {
+    return ::testing::AssertionFailure()
+      << "The address stack has size " << sb->addressStackSize
+      << ", but it should have size " << trueAddressStackSize;
+  }
+
+  const uint64_t* addrStackData =
+    reinterpret_cast<const uint64_t*>(sb->stacks + 16 * sb->callStackSize);
+  if (::memcmp(addrStackData, trueAddressStackData, 8 * trueAddressStackSize)) {
+    return ::testing::AssertionFailure()
+      << "The saved address stack is "
+      << toString(addrStackData, sb->addressStackSize)
+      << ", but it should be "
+      << toString(trueAddressStackData, trueAddressStackSize);
+  }
+
+  return ::testing::AssertionSuccess();
+}
+
+::testing::AssertionResult unl_test::verifyArray(Array a,
+						 const uint8_t* trueData,
+						 const uint64_t trueSize) {
+  if (arraySize(a) != trueSize) {
+    return ::testing::AssertionFailure()
+      << "Array has size " << arraySize(a) << ", but it should have size "
+      << trueSize;
+  }
+
+  if (memcmp(startOfArray(a), trueData, trueSize)) {
+    return ::testing::AssertionFailure()
+      << "Array is " << toString(startOfArray(a), arraySize(a))
+      << ", but it should be " << toString(trueData, trueSize);
+  }
+
+  return ::testing::AssertionSuccess();
+}
+
+void unl_test::dumpArray(Array a) {
+  std::cout << toString(startOfArray(a), arraySize(a));
+}

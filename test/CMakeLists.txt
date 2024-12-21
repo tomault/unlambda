@@ -1,3 +1,14 @@
+add_executable(array_tests array_tests.cpp testing_utils.cpp)
+
+target_include_directories(array_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(array_tests PRIVATE ...)
+
+target_link_directories(array_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(array_tests libunlambda)
+target_link_libraries(array_tests gtest_main gtest)
+target_link_libraries(array_tests pthread)
+
 add_executable(fileio_tests fileio_tests.cpp)
 
 target_include_directories(fileio_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
