@@ -144,6 +144,9 @@ VmMemory createVmMemory(uint64_t initialSize, uint64_t maxSize) {
 }
 
 void destroyVmMemory(VmMemory memory) {
+  if (shouldDeallocateStatusMsg(memory)) {
+    free((void*)memory->statusMsg);
+  }
   free((void*)memory->bytes);
   free((void*)memory);
 }

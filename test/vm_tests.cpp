@@ -15,6 +15,10 @@ extern "C" {
 
 namespace unl_test = unlambda::testing;
 
+// TODO: Remove a lot of the boilerplate and put it into testing_utils
+// TODO: Use testing_utils functions to make tests more concise
+// TODO: Insert address of state block into addressStackData[] rather\
+//         than pushing & verifying it separately
 TEST(vm_tests, createVM) {
   UnlambdaVM vm = createUnlambdaVM(16, 24, 1024, 4096);
 
@@ -162,7 +166,7 @@ TEST(vm_tests, loadProgramFromMemoryIntoTooSmallArea) {
   destroyUnlambdaVM(vm);
 }
 
-// Load a program from disk
+// TODO: Load a program from disk
 
 // Execute a PUSH instruction
 TEST(vm_tests, executePushInstruction) {
@@ -1538,21 +1542,625 @@ TEST(vm_tests, executeSaveInstruction) {
 }
 
 // Execute a SAVE instruction without enough addresses on the stack
+TEST(vm_tests, executeSaveCausingUnderflow) {
+  static const uint8_t PROGRAM[] = { SAVE_INSTRUCTION, 5 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  // Put four values on the address stack, but try to save 5
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackContent[] = { 128, 160, 500, 57 };
+  const uint64_t trueAddressStackSize =
+    sizeof(addressStackContent) / sizeof(addressStackContent[0]);
+  for (int i = 0; i < trueAddressStackSize; ++i) {
+    ASSERT_TRUE(unl_test::assertPushAddress(addressStack,
+					    addressStackContent[i]));
+  }
+
+  // Put three frames on the call stack
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackContent[] = { 800, 2, 999, 3, 700, 4 };
+  const uint64_t trueCallStackSize =
+    sizeof(callStackContent) / sizeof(callStackContent[0]);
+  for (int i = 0; i < trueCallStackSize; ++i) {
+    ASSERT_TRUE(unl_test::assertPushAddress(callStack, callStackContent[i]));
+  }
+
+  // Execute the SAVE instruction
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmAddressStackUnderflowError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "Address stack underflow");
+
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  // Verify the heap structure
+  const std::vector<unl_test::BlockSpec> trueHeapBlocks{
+    unl_test::BlockSpec(VmmFreeBlockType, 1024 - 16, 8),
+  };
+  const std::vector<uint64_t> trueFreeBlocks{ 8 };
+
+  VmMemory memory = getVmMemory(vm);
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 1024 - 16);
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapBlocks));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlocks));
+
+  // Verify the address stack is unchanged
+  ASSERT_EQ(stackSize(addressStack), trueAddressStackSize * 8);
+  
+  uint64_t* addrStackBottom =
+    reinterpret_cast<uint64_t*>(bottomOfStack(addressStack));
+  for (int i = 0; i < trueAddressStackSize; ++i) {
+    EXPECT_EQ(addrStackBottom[i], addressStackContent[i])
+      << "addrStackBottom[" << i << "] is " << addrStackBottom[i]
+      << ", but it should be " << addressStackContent[i];
+  }
+
+  // Verify the call stack is unchanged
+  ASSERT_EQ(stackSize(callStack), trueCallStackSize * 8);
+
+  uint64_t* callStackBottom =
+    reinterpret_cast<uint64_t*>(bottomOfStack(callStack));
+  for (int i = 0; i < trueCallStackSize; ++i) {
+    EXPECT_EQ(callStackBottom[i], callStackContent[i])
+      << "callStackBottom[" << i << "] is " << callStackBottom[i]
+      << ", but it should be " << callStackContent[i];
+  }
+
+  destroyUnlambdaVM(vm);
+}
 
 // Execute a SAVE instruction causing the address stack to overflow
+TEST(vm_tests, executeSaveCausingOverflow) {
+  static const uint8_t PROGRAM[] = { SAVE_INSTRUCTION, 1 };
+  UnlambdaVM vm = createUnlambdaVM(16, 4, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  // Put four values on the address stack, which leaves no room for the
+  // pointer to the saved state block, since the address stack is limited to
+  // four entries.
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackContent[] = { 128, 160, 500, 57 };
+  const uint64_t trueAddressStackSize =
+    sizeof(addressStackContent) / sizeof(addressStackContent[0]);
+  for (int i = 0; i < trueAddressStackSize; ++i) {
+    ASSERT_TRUE(unl_test::assertPushAddress(addressStack,
+					    addressStackContent[i]));
+  }
+
+  // Put three frames on the call stack
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackContent[] = { 800, 2, 999, 3, 700, 4 };
+  const uint64_t trueCallStackSize =
+    sizeof(callStackContent) / sizeof(callStackContent[0]);
+  for (int i = 0; i < trueCallStackSize; ++i) {
+    ASSERT_TRUE(unl_test::assertPushAddress(callStack, callStackContent[i]));
+  }
+
+  // Execute the SAVE instruction
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmAddressStackOverflowError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "Address stack overflow");
+
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  // Verify the heap structure
+  const std::vector<unl_test::BlockSpec> trueHeapBlocks{
+    unl_test::BlockSpec(VmmFreeBlockType, 1024 - 16, 8),
+  };
+  const std::vector<uint64_t> trueFreeBlocks{ 8 };
+
+  VmMemory memory = getVmMemory(vm);
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 1024 - 16);
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapBlocks));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlocks));
+
+  // Verify the address stack is unchanged
+  ASSERT_EQ(stackSize(addressStack), trueAddressStackSize * 8);
+  
+  uint64_t* addrStackBottom =
+    reinterpret_cast<uint64_t*>(bottomOfStack(addressStack));
+  for (int i = 0; i < trueAddressStackSize; ++i) {
+    EXPECT_EQ(addrStackBottom[i], addressStackContent[i])
+      << "addrStackBottom[" << i << "] is " << addrStackBottom[i]
+      << ", but it should be " << addressStackContent[i];
+  }
+
+  // Verify the call stack is unchanged
+  ASSERT_EQ(stackSize(callStack), trueCallStackSize * 8);
+
+  uint64_t* callStackBottom =
+    reinterpret_cast<uint64_t*>(bottomOfStack(callStack));
+  for (int i = 0; i < trueCallStackSize; ++i) {
+    EXPECT_EQ(callStackBottom[i], callStackContent[i])
+      << "callStackBottom[" << i << "] is " << callStackBottom[i]
+      << ", but it should be " << callStackContent[i];
+  }
+
+  destroyUnlambdaVM(vm);
+}
 
 // Execute a RESTORE instruction
+TEST(vm_tests, executeRestoreInstruction) {
+  static const uint8_t PROGRAM[] = { RESTORE_INSTRUCTION, 1 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  const uint64_t restoredAddrStackData[] = { 16, 40, 160, 352, 640 };
+  const uint64_t restoredAddrStackSize =
+    sizeof(restoredAddrStackData) / sizeof(restoredAddrStackData[0]);
+  const uint64_t restoredCallStackData[] = { 136, 4, 400, 2, 248, 3 };
+  const uint64_t restoredCallStackSize =
+    sizeof(restoredCallStackData) / sizeof(restoredCallStackData[0]);
+
+  // Create a heap with one saved state block and one free block
+  std::vector<unl_test::BlockSpec> heapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104),
+    unl_test::BlockSpec(VmmFreeBlockType, 896),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  unl_test::layoutBlocks(memory, heapStructure);
+
+  // Initialize the saved state block
+  unl_test::writeStateBlock(ptrToVmmAddress(memory, heapStructure[0].address),
+			    restoredCallStackSize / 2, restoredCallStackData,
+			    restoredAddrStackSize, restoredAddrStackData);
+
+  // Initialize the address stack with four values plus the address of
+  // the saved state block.  When the RESTORE instruction executes,
+  // the second value from the top (first value behind the saved state
+  // block address) will be kept and pushed onto the restored address stack.
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackData[] = { 72, 24, 912, 888 };
+  const uint64_t addressStackSize = ARRAY_SIZE(addressStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(addressStack, addressStackData,
+				      addressStackSize));
+  ASSERT_TRUE(unl_test::assertPushAddress(
+    addressStack, heapStructure[0].address + sizeof(HeapBlock)
+  ));
+
+  // Initialize the call stack with one frame
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = { 1008, 7 };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+  
+  // Execute the RESTORE instruction
+  EXPECT_EQ(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  EXPECT_EQ(getVmPC(vm), 2);
+
+  // Verify the heap structure is unchanged
+  const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104, 8),
+    unl_test::BlockSpec(VmmFreeBlockType, 896, 120),
+  };
+  const std::vector<uint64_t> trueFreeBlockList{ 120 };
+
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 896);
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlockList));
+
+  // Verify the address stack
+  uint64_t* trueAddrStackData =
+    (uint64_t*)::malloc(8 * (restoredAddrStackSize + 1));
+  assert(trueAddrStackData);
+  ::memcpy(trueAddrStackData, restoredAddrStackData, 8 * restoredAddrStackSize);
+  trueAddrStackData[restoredAddrStackSize] =
+    addressStackData[addressStackSize - 1];
+  
+  EXPECT_TRUE(unl_test::verifyStack("address stack", addressStack,
+				    trueAddrStackData,
+				    restoredAddrStackSize + 1));
+  ::free(trueAddrStackData);
+    
+  // Verify the call stack
+  EXPECT_TRUE(unl_test::verifyStack("call stack", callStack,
+				    restoredCallStackData,
+				    restoredCallStackSize));
+  
+  destroyUnlambdaVM(vm);
+}
 
 // Execute a RESTORE instruction on an empty address stack
+TEST(vm_tests, executeRestoreOnEmptyStack) {
+  static const uint8_t PROGRAM[] = { RESTORE_INSTRUCTION, 0 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  const uint64_t restoredAddrStackData[] = { 16, 40, 160, 352, 640 };
+  const uint64_t restoredAddrStackSize =
+    sizeof(restoredAddrStackData) / sizeof(restoredAddrStackData[0]);
+  const uint64_t restoredCallStackData[] = { 136, 4, 400, 2, 248, 3 };
+  const uint64_t restoredCallStackSize =
+    sizeof(restoredCallStackData) / sizeof(restoredCallStackData[0]);
+
+  // Create a heap with one saved state block and one free block
+  std::vector<unl_test::BlockSpec> heapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104),
+    unl_test::BlockSpec(VmmFreeBlockType, 896),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  unl_test::layoutBlocks(memory, heapStructure);
+
+  // Initialize the saved state block
+  unl_test::writeStateBlock(ptrToVmmAddress(memory, heapStructure[0].address),
+			    restoredCallStackSize / 2, restoredCallStackData,
+			    restoredAddrStackSize, restoredAddrStackData);
+
+  // Leave address stack empty
+
+  // Initialize the call stack with one frame
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = { 1008, 7 };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+  
+  // Execute the RESTORE instruction
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmAddressStackUnderflowError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "Address stack underflow");
+
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  // Verify the heap structure is unchanged
+  const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104, 8),
+    unl_test::BlockSpec(VmmFreeBlockType, 896, 120),
+  };
+  const std::vector<uint64_t> trueFreeBlockList{ 120 };
+
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 896);
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlockList));
+
+  // Verify the address and call stacks are unchanged
+  EXPECT_EQ(stackSize(getVmAddressStack(vm)), 0);
+  EXPECT_TRUE(unl_test::verifyStack("call stack", callStack,
+				    callStackData, callStackSize));
+  
+  destroyUnlambdaVM(vm);  
+}
 
 // Execute a RESTORE instruction with an invalid address on the address stack
+TEST(vm_tests, executeRestoreFromInvalidAddress) {
+  static const uint8_t PROGRAM[] = { RESTORE_INSTRUCTION, 0 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  const uint64_t restoredAddrStackData[] = { 16, 40, 160, 352, 640 };
+  const uint64_t restoredAddrStackSize =
+    sizeof(restoredAddrStackData) / sizeof(restoredAddrStackData[0]);
+  const uint64_t restoredCallStackData[] = { 136, 4, 400, 2, 248, 3 };
+  const uint64_t restoredCallStackSize =
+    sizeof(restoredCallStackData) / sizeof(restoredCallStackData[0]);
+
+  // Create a heap with one saved state block and one free block
+  std::vector<unl_test::BlockSpec> heapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104),
+    unl_test::BlockSpec(VmmFreeBlockType, 896),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  unl_test::layoutBlocks(memory, heapStructure);
+
+  // Initialize the saved state block
+  unl_test::writeStateBlock(ptrToVmmAddress(memory, heapStructure[0].address),
+			    restoredCallStackSize / 2, restoredCallStackData,
+			    restoredAddrStackSize, restoredAddrStackData);
+
+  // Put an invalid address on the address stack top
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackData[] = { 416, 2048 + sizeof(HeapBlock)};
+  const uint64_t addressStackSize = ARRAY_SIZE(addressStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(addressStack, addressStackData,
+				      addressStackSize));
+
+  // Initialize the call stack with one frame
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = { 1008, 7 };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+  
+  // Execute the RESTORE instruction
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmIllegalAddressError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "Cannot read from address 0x800");
+
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  // Verify the heap structure is unchanged
+  const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104, 8),
+    unl_test::BlockSpec(VmmFreeBlockType, 896, 120),
+  };
+  const std::vector<uint64_t> trueFreeBlockList{ 120 };
+
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 896);
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlockList));
+
+  // Verify the address and call stacks are unchanged
+  EXPECT_TRUE(unl_test::verifyStack("address stack", addressStack,
+				    addressStackData, addressStackSize));
+  EXPECT_TRUE(unl_test::verifyStack("call stack", callStack,
+				    callStackData, callStackSize));
+  
+  destroyUnlambdaVM(vm);
+}
 
 // Execute a RESTORE instruction with the address on the stack pointing
 // to a code block
+TEST(vm_tests, executeRestoreFromCodeBlock) {
+  static const uint8_t PROGRAM[] = { RESTORE_INSTRUCTION, 0 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  // Create a heap with one saved state block and one free block
+  std::vector<unl_test::BlockSpec> heapStructure{
+    unl_test::BlockSpec(VmmCodeBlockType, 104),
+    unl_test::BlockSpec(VmmFreeBlockType, 896),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  unl_test::layoutBlocks(memory, heapStructure);
+
+  // Put address of code block on stack top
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackData[] = { 416 };
+  const uint64_t addressStackSize = ARRAY_SIZE(addressStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(addressStack, addressStackData,
+				      addressStackSize));
+  ASSERT_TRUE(unl_test::assertPushAddress(
+    addressStack, heapStructure[0].address + sizeof(HeapBlock)
+  ));
+
+  // Initialize the call stack with one frame
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = { 1008, 7 };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+  
+  // Execute the RESTORE instruction
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmFatalError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)),
+	    "Block at address 0x10 is not a VmStateBlock.  It has type 1");
+
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  // Verify the heap structure is unchanged
+  const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmCodeBlockType, 104, 8),
+    unl_test::BlockSpec(VmmFreeBlockType, 896, 120),
+  };
+  const std::vector<uint64_t> trueFreeBlockList{ 120 };
+
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 896);
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlockList));
+
+  // Verify the address and call stacks are unchanged
+  uint64_t* trueAddrStackData =
+    (uint64_t*)::malloc((addressStackSize + 1) * sizeof(uint64_t));
+  ::memcpy(trueAddrStackData, addressStackData,
+	   addressStackSize * sizeof(uint64_t));
+  trueAddrStackData[addressStackSize] =
+    heapStructure[0].address + sizeof(HeapBlock);
+  EXPECT_TRUE(unl_test::verifyStack("address stack", addressStack,
+				    trueAddrStackData, addressStackSize + 1));
+  ::free((void*)trueAddrStackData);
+
+  EXPECT_TRUE(unl_test::verifyStack("call stack", callStack,
+				    callStackData, callStackSize));
+  
+  destroyUnlambdaVM(vm);
+}
 
 // Execute a RESTORE instruction causing address stack underflow
+TEST(vm_tests, executeRestoreCausingStackUnderflow) {
+  // Try to restore 3 addresses from a stack with only 2 addresses on it
+  static const uint8_t PROGRAM[] = { RESTORE_INSTRUCTION, 3 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  const uint64_t restoredAddrStackData[] = { 16, 40, 160, 352, 640 };
+  const uint64_t restoredAddrStackSize =
+    sizeof(restoredAddrStackData) / sizeof(restoredAddrStackData[0]);
+  const uint64_t restoredCallStackData[] = { 136, 4, 400, 2, 248, 3 };
+  const uint64_t restoredCallStackSize =
+    sizeof(restoredCallStackData) / sizeof(restoredCallStackData[0]);
+
+  // Create a heap with one saved state block and one free block
+  std::vector<unl_test::BlockSpec> heapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104),
+    unl_test::BlockSpec(VmmFreeBlockType, 896),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  unl_test::layoutBlocks(memory, heapStructure);
+
+  // Initialize the saved state block
+  unl_test::writeStateBlock(ptrToVmmAddress(memory, heapStructure[0].address),
+			    restoredCallStackSize / 2, restoredCallStackData,
+			    restoredAddrStackSize, restoredAddrStackData);
+
+  // Put address of code block on stack top
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackData[] = {
+    416, heapStructure[0].address + sizeof(HeapBlock)
+  };
+  const uint64_t addressStackSize = ARRAY_SIZE(addressStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(addressStack, addressStackData,
+				      addressStackSize));
+
+  // Initialize the call stack with one frame
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = { 1008, 7 };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+  
+  // Execute the RESTORE instruction
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmAddressStackUnderflowError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "Address stack underflow");
+
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  // Verify the heap structure is unchanged
+  const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104, 8),
+    unl_test::BlockSpec(VmmFreeBlockType, 896, 120),
+  };
+  const std::vector<uint64_t> trueFreeBlockList{ 120 };
+
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 896);
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlockList));
+
+  // Verify the address and call stacks are unchanged
+  EXPECT_TRUE(unl_test::verifyStack("address stack", addressStack,
+				    addressStackData, addressStackSize));
+  EXPECT_TRUE(unl_test::verifyStack("call stack", callStack,
+				    callStackData, callStackSize));
+  
+  destroyUnlambdaVM(vm);  
+}
 
 // Execute a RESTORE instruction causing address stack overflow
+TEST(vm_tests, executeRestoreCausingStackOverflow) {
+  static const uint8_t PROGRAM[] = { RESTORE_INSTRUCTION, 1 };
+  UnlambdaVM vm = createUnlambdaVM(16, 5, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  const uint64_t restoredAddrStackData[] = { 16, 40, 160, 352, 640 };
+  const uint64_t restoredAddrStackSize =
+    sizeof(restoredAddrStackData) / sizeof(restoredAddrStackData[0]);
+  const uint64_t restoredCallStackData[] = { 136, 4, 400, 2, 248, 3 };
+  const uint64_t restoredCallStackSize =
+    sizeof(restoredCallStackData) / sizeof(restoredCallStackData[0]);
+
+  // Create a heap with one saved state block and one free block
+  std::vector<unl_test::BlockSpec> heapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104),
+    unl_test::BlockSpec(VmmFreeBlockType, 896),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  unl_test::layoutBlocks(memory, heapStructure);
+
+  // Initialize the saved state block
+  unl_test::writeStateBlock(ptrToVmmAddress(memory, heapStructure[0].address),
+			    restoredCallStackSize / 2, restoredCallStackData,
+			    restoredAddrStackSize, restoredAddrStackData);
+
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackData[] = {
+    416, heapStructure[0].address + sizeof(HeapBlock)
+  };
+  const uint64_t addressStackSize = ARRAY_SIZE(addressStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(addressStack, addressStackData,
+				      addressStackSize));
+
+  // Initialize the call stack with one frame
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = { 1008, 7 };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+  
+  // Execute the RESTORE instruction
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmAddressStackOverflowError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "Address stack overflow");
+
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  // Verify the heap structure is unchanged
+  const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmStateBlockType, 104, 8),
+    unl_test::BlockSpec(VmmFreeBlockType, 896, 120),
+  };
+  const std::vector<uint64_t> trueFreeBlockList{ 120 };
+
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 896);
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlockList));
+
+  // Verify the address and call stacks are unchanged
+  EXPECT_TRUE(unl_test::verifyStack("address stack", addressStack,
+				    addressStackData, addressStackSize));
+  EXPECT_TRUE(unl_test::verifyStack("call stack", callStack,
+				    callStackData, callStackSize));
+  
+  destroyUnlambdaVM(vm);  
+}
 
 // Execute a PRINT instruction
 TEST(vm_tests, executePrintInstruction) {
@@ -1580,6 +2188,75 @@ TEST(vm_tests, executePrintInstruction) {
   EXPECT_EQ(stackSize(getVmCallStack(vm)), 0);
   EXPECT_EQ(vmmHeapSize(getVmMemory(vm)), 1024 - 8);
   EXPECT_EQ(vmmBytesFree(getVmMemory(vm)), 1024 - 16);
+
+  destroyUnlambdaVM(vm);
+}
+
+// Execute a HALT instruction
+TEST(vm_tests, executeHaltInstruction) {
+  static const uint8_t PROGRAM[] = { HALT_INSTRUCTION };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  // Leave address stack empty
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmHalted);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "VM halted");
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  destroyUnlambdaVM(vm);
+}
+
+// Execute a PANIC instruction
+TEST(vm_tests, executePanicInstruction) {
+  static const uint8_t PROGRAM[] = { PANIC_INSTRUCTION };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  // Leave address stack empty
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmPanicError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "VM executed a PANIC instruction");
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  destroyUnlambdaVM(vm);
+}
+
+// Execute an illegal instruction
+TEST(vm_tests, executeIllegalInstruction) {
+  static const uint8_t PROGRAM[] = { 255 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  // Leave address stack empty
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmIllegalInstructionError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)),
+	    "VM attempted to execute an illegal instruction");
+  EXPECT_EQ(getVmPC(vm), 0);  
+
+  destroyUnlambdaVM(vm);
 }
 
 // Execute a MKS2 instruction forcing garbage collection
@@ -1835,8 +2512,262 @@ TEST(vm_tests, executeMks2ExceedingMaxSize) {
 }
 
 // Execute a SAVE instruction forcing garbage collection
+TEST(vm_tests, executeSaveForcingGarbageCollection) {
+  static const uint8_t PROGRAM[] = { SAVE_INSTRUCTION, 0 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  // Heap consists of four code blocks.  The first and second blocks
+  // are referenced by the address stack, while the third and fourth
+  // blocks are unreferenced.  After garbage collection, there will be
+  // four blocks on the heap: the original first and second blocks,
+  // the new state block created by SAVE and a free block.n
+  std::vector<unl_test::BlockSpec> blockStructure{
+    unl_test::BlockSpec(VmmCodeBlockType, 64),
+    unl_test::BlockSpec(VmmCodeBlockType, 400),
+    unl_test::BlockSpec(VmmCodeBlockType, 392),
+    unl_test::BlockSpec(VmmCodeBlockType, 128),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  layoutBlocks(memory, blockStructure);
+
+  // First and second blocks go onto the address stack
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackData[] = {
+    blockStructure[0].address + sizeof(HeapBlock),
+    blockStructure[1].address + sizeof(HeapBlock)
+  };
+  const uint64_t addressStackSize = ARRAY_SIZE(addressStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(addressStack, addressStackData,
+				      addressStackSize));
+
+  // Put four frames onto the call stack.  Be careful not to reference
+  // the third or fourth blocks
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = { 16, 4, 88, 2, 5, 20, 16, 3 };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+
+  // Execute the instruction
+  EXPECT_EQ(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  EXPECT_EQ(getVmPC(vm), 2);
+
+  // Verify the heap
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 424);
+
+  // Expected heap structure
+  static const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmCodeBlockType, 64, 8),
+    unl_test::BlockSpec(VmmCodeBlockType, 400, 80),
+    unl_test::BlockSpec(VmmStateBlockType, 96, 488),
+    unl_test::BlockSpec(VmmFreeBlockType, 424, 592),
+  };
+  static const std::vector<uint64_t> trueFreeBlocks{ 592 };
+  
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlocks));
+
+  // Verify the contents of the saved state block
+  ASSERT_TRUE(unl_test::verifyStateBlock(
+    ptrToVmmAddress(memory, trueHeapStructure[2].address + sizeof(HeapBlock)),
+    callStackData, callStackSize / 2, addressStackData, addressStackSize
+  ));
+	      
+  destroyUnlambdaVM(vm);
+}
 
 // Execute a SAVE instruction forcing an increase in the size of the VM's memory
+TEST(vm_tests, executeSaveForcingVmMemoryIncrease) {
+  static const uint8_t PROGRAM[] = { SAVE_INSTRUCTION, 0 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 4096);
+
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  // Heap consists of four code blocks.  All four blocks are referenced
+  // from the address stack and some are referenced from the call stack
+  // as well.  
+  std::vector<unl_test::BlockSpec> blockStructure{
+    unl_test::BlockSpec(VmmCodeBlockType, 64),
+    unl_test::BlockSpec(VmmCodeBlockType, 400),
+    unl_test::BlockSpec(VmmCodeBlockType, 392),
+    unl_test::BlockSpec(VmmCodeBlockType, 128),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  layoutBlocks(memory, blockStructure);
+
+  // First and second blocks go onto the address stack
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackData[] = {
+    blockStructure[0].address + sizeof(HeapBlock),
+    blockStructure[1].address + sizeof(HeapBlock),
+    blockStructure[2].address + sizeof(HeapBlock),
+    blockStructure[3].address + sizeof(HeapBlock),
+  };
+  const uint64_t addressStackSize = ARRAY_SIZE(addressStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(addressStack, addressStackData,
+				      addressStackSize));
+
+  // Put four frames onto the call stack.
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = {
+    blockStructure[0].address + sizeof(HeapBlock),  4,
+    blockStructure[1].address + sizeof(HeapBlock),  2,
+    blockStructure[1].address + sizeof(HeapBlock), 20,
+    blockStructure[0].address + sizeof(HeapBlock),  3
+  };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+
+  // Execute the instruction
+  EXPECT_EQ(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  EXPECT_EQ(getVmPC(vm), 2);
+
+  // Verify the heap
+  EXPECT_EQ(currentVmmSize(memory), 2048);
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 2048 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 896);
+
+  // Expected heap structure
+  static const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmCodeBlockType,   64,    8),
+    unl_test::BlockSpec(VmmCodeBlockType,  400,   80),
+    unl_test::BlockSpec(VmmCodeBlockType,  392,  488),
+    unl_test::BlockSpec(VmmCodeBlockType,  128,  888),
+    unl_test::BlockSpec(VmmStateBlockType, 112, 1024),
+    unl_test::BlockSpec(VmmFreeBlockType,  896, 1144),
+  };
+  static const std::vector<uint64_t> trueFreeBlocks{ 1144 };
+
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlocks));
+
+  // Verify the call stack is unchanged
+  EXPECT_TRUE(unl_test::verifyStack("call stack", callStack, callStackData,
+				    callStackSize));
+
+  // Address stack should have the address of the state block on top
+  uint64_t* trueAddrStackData = (uint64_t*)::malloc(8 * (addressStackSize + 1));
+  ::memcpy(trueAddrStackData, addressStackData, 8 * addressStackSize);
+  trueAddrStackData[addressStackSize] =
+    trueHeapStructure[4].address + sizeof(HeapBlock);
+  EXPECT_TRUE(unl_test::verifyStack("address stack", addressStack,
+				    trueAddrStackData, addressStackSize + 1));
+  ::free(trueAddrStackData);
+  
+  // Verify the contents of the saved state block
+  ASSERT_TRUE(unl_test::verifyStateBlock(
+    ptrToVmmAddress(memory, trueHeapStructure[4].address + sizeof(HeapBlock)),
+    callStackData, callStackSize / 2, addressStackData, addressStackSize
+  ));
+	      
+  destroyUnlambdaVM(vm);
+}
 
 // Execute a SAVE instruction causing the VM's memory to exceed its max size
+TEST(vm_tests, executeSaveExceedingMaximumMemorySize) {
+  static const uint8_t PROGRAM[] = { SAVE_INSTRUCTION, 0 };
+  UnlambdaVM vm = createUnlambdaVM(16, 8, 1024, 1024);
 
+  ASSERT_NE(vm, (void*)0);
+  EXPECT_EQ(getVmStatus(vm), 0);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)), "OK");
+
+  ASSERT_EQ(loadVmProgramFromMemory(vm, "test_program", PROGRAM,
+				    sizeof(PROGRAM)), 0);
+
+  // Heap consists of four code blocks.  All four blocks are referenced
+  // from the address stack and some are referenced from the call stack
+  // as well.  
+  std::vector<unl_test::BlockSpec> blockStructure{
+    unl_test::BlockSpec(VmmCodeBlockType, 64),
+    unl_test::BlockSpec(VmmCodeBlockType, 400),
+    unl_test::BlockSpec(VmmCodeBlockType, 392),
+    unl_test::BlockSpec(VmmCodeBlockType, 128),
+  };
+
+  VmMemory memory = getVmMemory(vm);
+  layoutBlocks(memory, blockStructure);
+
+  // First and second blocks go onto the address stack
+  Stack addressStack = getVmAddressStack(vm);
+  const uint64_t addressStackData[] = {
+    blockStructure[0].address + sizeof(HeapBlock),
+    blockStructure[1].address + sizeof(HeapBlock),
+    blockStructure[2].address + sizeof(HeapBlock),
+    blockStructure[3].address + sizeof(HeapBlock),
+  };
+  const uint64_t addressStackSize = ARRAY_SIZE(addressStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(addressStack, addressStackData,
+				      addressStackSize));
+
+  // Put four frames onto the call stack.
+  Stack callStack = getVmCallStack(vm);
+  const uint64_t callStackData[] = {
+    blockStructure[0].address + sizeof(HeapBlock),  4,
+    blockStructure[1].address + sizeof(HeapBlock),  2,
+    blockStructure[1].address + sizeof(HeapBlock), 20,
+    blockStructure[0].address + sizeof(HeapBlock),  3
+  };
+  const uint64_t callStackSize = ARRAY_SIZE(callStackData);
+  ASSERT_TRUE(unl_test::pushOntoStack(callStack, callStackData, callStackSize));
+
+  // Execute the instruction
+  EXPECT_NE(stepVm(vm), 0);
+  EXPECT_EQ(getVmStatus(vm), VmOutOfMemoryError);
+  EXPECT_EQ(std::string(getVmStatusMsg(vm)),
+	    "Could not allocate block of size 112 for SAVE (Maximum memory "
+	    "size exceeded)");
+
+  EXPECT_EQ(getVmPC(vm), 0);
+
+  // Verify the heap
+  EXPECT_EQ(currentVmmSize(memory), 1024);
+  EXPECT_EQ(vmmAddressForPtr(memory, getVmmHeapStart(memory)), 8);
+  EXPECT_EQ(vmmHeapSize(memory), 1024 - 8);
+  EXPECT_EQ(vmmBytesFree(memory), 0);
+
+  // Expected heap structure
+  static const std::vector<unl_test::BlockSpec> trueHeapStructure{
+    unl_test::BlockSpec(VmmCodeBlockType,   64,    8),
+    unl_test::BlockSpec(VmmCodeBlockType,  400,   80),
+    unl_test::BlockSpec(VmmCodeBlockType,  392,  488),
+    unl_test::BlockSpec(VmmCodeBlockType,  128,  888),
+  };
+  static const std::vector<uint64_t> trueFreeBlocks{ };
+
+  EXPECT_TRUE(unl_test::verifyBlockStructure(memory, trueHeapStructure));
+  EXPECT_TRUE(unl_test::verifyFreeBlockList(memory, trueFreeBlocks));
+
+  // Verify the call and address stacks are unchanged
+  EXPECT_TRUE(unl_test::verifyStack("call stack", callStack, callStackData,
+				    callStackSize));
+  EXPECT_TRUE(unl_test::verifyStack("address stack", addressStack,
+				    addressStackData, addressStackSize));
+
+  destroyUnlambdaVM(vm);
+}
+
+// TODO:  Write a test that requires more than one increase in the VM memory
+//        size to accomodate a large state block or run out of memory.

@@ -1970,6 +1970,8 @@ TEST(vmmem_tests, iterateOverAllHeapBlocks) {
     BlockSpec(VmmCodeBlockType, 64, 952),
   };
   EXPECT_EQ(blocks, trueBlocks);
+
+  destroyVmMemory(memory);
 }
 
 // Iterate over all free blocks on the heap
@@ -2003,6 +2005,8 @@ TEST(vmmem_tests, iterateOverAllFreeBlocks) {
     BlockSpec(VmmFreeBlockType, 64, 880),
   };
   EXPECT_EQ(blocks, trueBlocks);
+
+  destroyVmMemory(memory);
 }
 
 // TODO: Test early-stopping in forEachVmmBlock and forEachFreeBlockInVmm

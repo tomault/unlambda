@@ -285,6 +285,11 @@
  *         HALT
  **/
 
+/** TODO: Add breakpoints */
+/** TODO: Rename PANIC to BRK and have the VM behave as if it had encountered
+ *        a breakpoint.
+ */
+
 #include "vm.h"
 #include "vm_instructions.h"
 #include "vm_image.h"
@@ -706,7 +711,8 @@ static int executeNextInstruction(UnlambdaVM vm) {
 
   if (!pcp) {
     char msg[200];
-    snprintf(msg, sizeof(msg), "VM PC is at unknown address %lu", vm->pc);
+    snprintf(msg, sizeof(msg),
+	     "VM PC is located at illegal address 0x%" PRIx64, vm->pc);
     setVmStatus(vm, VmFatalError, msg);
     return -1;
   }
@@ -1070,6 +1076,14 @@ static int executeSaveInstruction(UnlambdaVM vm) {
     setVmStatus(vm, VmAddressStackUnderflowError, "Address stack underflow");
     return -1;
   }
+
+  /** Make sure there is space on the address stack for the pointer to
+   *  the saved state block.
+   */
+  if (stackSize(vm->addressStack) == stackMaxSize(vm->addressStack)) {
+    setVmStatus(vm, VmAddressStackOverflowError, "Address stack overflow");
+    return -1;
+  }
   
   VmStateBlock* const state = allocateVmStateBlock(
       vm, "SAVE", stackSize(vm->callStack) / 16,
@@ -1090,12 +1104,10 @@ static int executeSaveInstruction(UnlambdaVM vm) {
   // Address of state block's data goes on stack.  
   const uint64_t stateAddr = vmmAddressForPtr(vm->memory, (uint8_t*)state)
                                + sizeof(HeapBlock);
-  if (pushToAddressStack(vm, stateAddr)) {
-    /** Don't worry about the allocated state block.  Either the VM will exit
-     *  or garbage collection will free it
-     */
-    return -1;
-  }
+  /** Checked for enough space on the address stack earlier, so this call
+   *    should succeed.
+   */
+  assert(!pushToAddressStack(vm, stateAddr));
 
   vm->pc += 2;
   return 0;
@@ -1123,8 +1135,10 @@ static int executeRestoreInstruction(UnlambdaVM vm) {
 
   if (!vmState) {
     char msg[200];
-    snprintf(msg, sizeof(msg), "Cannot read from address 0x%lx",
+    snprintf(msg, sizeof(msg), "Cannot read from address 0x%" PRIx64,
 	     savedStateAddr - sizeof(HeapBlock));
+    /** Put the popped address back */
+    assert(!pushToAddressStack(vm, savedStateAddr));
     setVmStatus(vm, VmIllegalAddressError, msg);
     return -1;
   }
@@ -1132,15 +1146,18 @@ static int executeRestoreInstruction(UnlambdaVM vm) {
   if (getVmmBlockType((HeapBlock*)vmState) != VmmStateBlockType) {
     char msg[200];
     snprintf(msg, sizeof(msg),
-	     "Block at address 0x%lx is not a VmStateBlock.  It has type %u",
-	     savedStateAddr,
+	     "Block at address 0x%" PRIx64 " is not a VmStateBlock.  It "
+	     "has type %u", savedStateAddr,
 	     (unsigned int)getVmmBlockType((HeapBlock*)vmState));
+    /** Put back the popped address */
+    assert(!pushToAddressStack(vm, savedStateAddr));
     setVmStatus(vm, VmFatalError, msg);
     return -1;
   }
 
   /** Save "save" addresses on the top of the address stack to push later */
   if (stackSize(vm->addressStack) < bytesToSave) {
+    assert(!pushToAddressStack(vm, savedStateAddr));
     setVmStatus(vm, VmAddressStackUnderflowError, "Address stack underflow");
     return -1;
   }
@@ -1158,9 +1175,19 @@ static int executeRestoreInstruction(UnlambdaVM vm) {
 	 (const void*)(topOfStack(vm->addressStack) - bytesToSave),
 	 bytesToSave);
 
+  /** Ensure the address stack can hold the restored stack plus any data
+   *  from the current stack that goes on top */
+  if ((8 * vmState->addressStackSize + bytesToSave)
+        > stackMaxSize(vm->addressStack)) {
+    assert(!pushToAddressStack(vm, savedStateAddr));
+    setVmStatus(vm, VmAddressStackOverflowError, "Address stack overflow");
+    free((void*)savedData);
+    return -1;
+  }
+  
   /** Restore the call and address stacks */
 
-  if (!setStack(vm->callStack, vmState->stacks, 16 * vmState->callStackSize)) {
+  if (setStack(vm->callStack, vmState->stacks, 16 * vmState->callStackSize)) {
     char msg[200];
     snprintf(msg, sizeof(msg), "Could not restore call stack (%s)",
 	     getStackStatusMsg(vm->callStack));
@@ -1171,7 +1198,7 @@ static int executeRestoreInstruction(UnlambdaVM vm) {
 
   uint8_t* const addressStackStart =
       vmState->stacks + 16 * vmState->callStackSize;
-  if (!setStack(vm->addressStack, addressStackStart,
+  if (setStack(vm->addressStack, addressStackStart,
 		8 * vmState->addressStackSize)) {
     char msg[200];
     snprintf(msg, sizeof(msg), "Could not restore address stack (%s)",
@@ -1183,7 +1210,7 @@ static int executeRestoreInstruction(UnlambdaVM vm) {
 
   if (save) {
     /** Push the saved address stack top onto the address stack */
-    if (!pushStack(vm->addressStack, savedData, bytesToSave)) {
+    if (pushStack(vm->addressStack, savedData, bytesToSave)) {
       const int status = getStackStatus(vm->addressStack);
       if (status == StackOverflowError) {
 	setVmStatus(vm, VmAddressStackOverflowError, "Address stack overflow");
@@ -1344,7 +1371,6 @@ static VmStateBlock* allocateVmStateBlock(UnlambdaVM vm,
       return NULL;
     }
   }
-  printf("Allocated state block of size %" PRIu64 "\n", size);
   return b;
 }
 
