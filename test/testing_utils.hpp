@@ -20,6 +20,48 @@ extern "C" {
 
 namespace unlambda {
   namespace testing {
+    namespace internal {
+      /** Convert a uint8_t to a uint32_t but leave other types as-is
+       *
+       *  This function and its specialization are used by toString to
+       *  convert a uint8_t to a uint32_t while leaving other data types
+       *  unaltered, so values of type uint8_t don't get printed as
+       *  single characters.
+       */
+      template <typename T>
+      const T& convertUInt8ToUInt32(const T& v) { return v; }
+
+      inline uint32_t convertUInt8ToUInt32(const uint8_t& v) { return v; }
+    }
+    
+    /** Create a string representation for a fixed-size array
+     *
+     *  Arguments:
+     *    data      Start of the array
+     *    size      Number of items in the array
+     *
+     *  Returns:
+     *    The contents of the array, separated by commas and eclosed within
+     *    square brackets.
+     *
+     *  Throws:
+     *    Does not throw
+     */
+    template <typename T>
+    std::string toString(const T* data, uint64_t size) {
+      std::ostringstream msg;
+      const T* const end = data + size;
+
+      msg << "[";
+      for (auto p = data; p != end; ++p) {
+	if (p != data) {
+	  msg << ",";
+	}
+	msg << " " << internal::convertUInt8ToUInt32(*p);
+      }
+      msg << " ]";
+      return msg.str();
+    }
 
     /** Describes a block on the heap for verification */
     struct BlockSpec {

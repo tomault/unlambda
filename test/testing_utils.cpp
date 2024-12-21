@@ -14,7 +14,7 @@ void setVmmFreeList(VmMemory memory, uint64_t addrOfFirstFreeBlock,
 
 namespace unl_test = unlambda::testing;
 
-namespace {
+namespace internal {
   std::string toString(Stack s) {
     std::ostringstream msg;
     msg << "[";
@@ -25,38 +25,6 @@ namespace {
 	msg << ",";
       }
       msg << " " << *p;
-    }
-    msg << " ]";
-    return msg.str();
-  }
-
-  template <typename T>
-  std::string toString(const T* data, uint64_t size) {
-    std::ostringstream msg;
-    const T* const end = data + size;
-
-    msg << "[";
-    for (auto p = data; p != end; ++p) {
-      if (p != data) {
-	msg << ",";
-      }
-      msg << " " << *p;
-    }
-    msg << " ]";
-    return msg.str();
-  }
-
-  // Need a specialization to keep byte data from being printed as characters
-  std::string toString(const uint8_t* data, uint64_t size) {
-    std::ostringstream msg;
-    const uint8_t* const end = data + size;
-
-    msg << "[";
-    for (auto p = data; p != end; ++p) {
-      if (p != data) {
-	msg << ",";
-      }
-      msg << " " << (uint32_t)*p;
     }
     msg << " ]";
     return msg.str();
@@ -368,8 +336,8 @@ void unl_test::handleCollectorError(VmMemory memory, uint64_t address,
     if (bottom[i] != trueData[i]) {
       return ::testing::AssertionFailure()
 	<< "Content of " << name << " is incorrect.  It is "
-	<< toString(s)  << ", but it should be "
-	<< toString(trueData, trueSize);
+	<< ::internal::toString(s)  << ", but it should be "
+	<< unl_test::toString(trueData, trueSize);
     }
   }
 
@@ -388,7 +356,7 @@ void unl_test::handleCollectorError(VmMemory memory, uint64_t address,
   for (int i = 0; i < sizeof(sb->guard); ++i) {
     if (sb->guard[i] != PANIC_INSTRUCTION) {
       return ::testing::AssertionFailure()
-	<< "The guard is " << toString(sb->guard, sizeof(sb->guard))
+	<< "The guard is " << unl_test::toString(sb->guard, sizeof(sb->guard))
 	<< ", but it should consist entirely of "
 	<< (uint32_t)PANIC_INSTRUCTION << " bytes";
     }
@@ -405,8 +373,9 @@ void unl_test::handleCollectorError(VmMemory memory, uint64_t address,
   if (::memcmp(callStackData, trueCallStackData, 16 * trueCallStackSize)) {
     return ::testing::AssertionFailure()
       << "The saved call stack is "
-      << toString(callStackData, sb->callStackSize) << ", but it should be "
-      << toString(trueCallStackData, trueCallStackSize);
+      << unl_test::toString(callStackData, sb->callStackSize)
+      << ", but it should be "
+      << unl_test::toString(trueCallStackData, trueCallStackSize);
   }
   
   // Verify the address stack size and content
@@ -421,9 +390,9 @@ void unl_test::handleCollectorError(VmMemory memory, uint64_t address,
   if (::memcmp(addrStackData, trueAddressStackData, 8 * trueAddressStackSize)) {
     return ::testing::AssertionFailure()
       << "The saved address stack is "
-      << toString(addrStackData, sb->addressStackSize)
+      << unl_test::toString(addrStackData, sb->addressStackSize)
       << ", but it should be "
-      << toString(trueAddressStackData, trueAddressStackSize);
+      << unl_test::toString(trueAddressStackData, trueAddressStackSize);
   }
 
   return ::testing::AssertionSuccess();
@@ -440,13 +409,13 @@ void unl_test::handleCollectorError(VmMemory memory, uint64_t address,
 
   if (memcmp(startOfArray(a), trueData, trueSize)) {
     return ::testing::AssertionFailure()
-      << "Array is " << toString(startOfArray(a), arraySize(a))
-      << ", but it should be " << toString(trueData, trueSize);
+      << "Array is " << unl_test::toString(startOfArray(a), arraySize(a))
+      << ", but it should be " << unl_test::toString(trueData, trueSize);
   }
 
   return ::testing::AssertionSuccess();
 }
 
 void unl_test::dumpArray(Array a) {
-  std::cout << toString(startOfArray(a), arraySize(a));
+  std::cout << unl_test::toString(startOfArray(a), arraySize(a));
 }

@@ -1,5 +1,6 @@
 
-add_library(libunlambda STATIC array.c fileio.c stack.c symtab.c unlcc.c vm.c
-                               vm_image.c vm_instructions.c vmmem.c)
+add_library(libunlambda STATIC array.c brkpt.c fileio.c stack.c symtab.c
+                               unlcc.c vm.c vm_image.c vm_instructions.c
+			       vmmem.c)
 
 target_include_directories(libunlambda PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
