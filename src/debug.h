@@ -30,27 +30,29 @@
  *  Frame numbers start at 0 for the top of the stack
  */
 
+#include <dbgcmd.h>
 #include <vm.h>
 #include <stddef.h>
 
-typedef struct DebuggerImpl Debugger;
+typedef struct DebuggerImpl_ Debugger;
 
 /** Create a new debugger for the given virtual machine */
-Debugger createDebugger(UnlambdaVM vm);
+Debugger createDebugger(UnlambdaVM vm, uint32_t maxBreakpoints);
 
 /** Destroy a debugger and release the resources it uses */
 void destroyDebugger(Debugger dbg);
+
+int getDebuggerStatus(Debugger dbg);
+const char* getDebuggerStatusMsg(Debugger dbg);
+void clearDebuggerStatus(Debugger dbg);
 
 /** Returns true if VM execution should temporarily halt and enter debug
  *  mode
  */
 int shouldBreakExecution(Debugger dbg);
 
-/** Read a command from the console */
-const char* readDebugCommand(Debugger dbg, char* buffer, size_t bufferSize);
-
-/** Parse and execute a debug command */
-int parseAndExecuteDebugCommand(Debugger dbg, const char* command);
+/** Execute a debug command */
+int executeDebugCommand(Debugger dbg, DebugCommand cmd);
 
 #endif
 
