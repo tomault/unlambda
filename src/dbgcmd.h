@@ -1,14 +1,16 @@
 #ifndef __UNLAMBDA__DBGCMD_H__
 #define __UNLAMBDA__DBGCMD_H__
 
+#include <vm.h>
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
-typedef struct DissassembleArgs_ {
+typedef struct DisassembleArgs_ {
   uint64_t address;
   uint32_t numLines;
-} DissasembleArgs;
+} DisassembleArgs;
 
 typedef struct DumpBytesArgs_ {
   uint64_t address;
@@ -19,7 +21,7 @@ typedef struct WriteBytesArgs_ {
   uint64_t address;
   uint32_t length;
   uint8_t* data;
-};
+} WriteBytesArgs;
 
 typedef struct DumpStackArgs_ {
   uint64_t depth;
@@ -86,7 +88,7 @@ typedef union DebugCommandArgs_ {
   HeapDumpArgs heapDump;
   LookupSymbolArgs lookupSymbol;
   ErrorDetails errorDetails;
-} CommandArgs;
+} DebugCommandArgs;
 
 typedef struct DebugCommandImpl_ {
   int32_t cmd;
@@ -95,10 +97,10 @@ typedef struct DebugCommandImpl_ {
 
 typedef DebugCommandImpl* DebugCommand;
 
-DebugCommand createDisssassembleCommand(uint64_t address, uint32_t numLines);
+DebugCommand createDisassembleCommand(uint64_t address, uint32_t numLines);
 DebugCommand createDumpBytesCommand(uint64_t address, uint32_t length);
 DebugCommand createWriteBytesCommand(uint64_t address, uint32_t length,
-				     uint8_t* bytes);
+				     const uint8_t* bytes);
 DebugCommand createDumpAddressStackCommand(uint64_t depth, uint64_t count);
 DebugCommand createModifyAddressStackCommand(uint64_t depth, uint64_t address);
 DebugCommand createPushAddressStackCommand(uint64_t address);

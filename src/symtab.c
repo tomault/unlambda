@@ -181,6 +181,17 @@ const Symbol* getSymbolBeforeAddress(SymbolTable symtab, uint64_t address) {
   return i > 0 ? symtab->symbols[i - 1] : NULL;
 }
 
+const Symbol* getSymbolAtOrBeforeAddress(SymbolTable symtab, uint64_t address) {
+  int64_t i = findSymbolByAddress(symtab, address);
+  if (i >= 0) {
+    return symtab->symbols[i];
+  } else if (-i > 1) {
+    return symtab->symbols[-i - 2];
+  } else {
+    return NULL;
+  }
+}
+
 const Symbol* getSymbolAfterAddress(SymbolTable symtab, uint64_t address) {
   int64_t i = findSymbolByAddress(symtab, address);
   if (i < 0) {
@@ -189,6 +200,16 @@ const Symbol* getSymbolAfterAddress(SymbolTable symtab, uint64_t address) {
     ++i;
   }
   return (i < symtab->numSymbols) ? symtab->symbols[i] : NULL;
+}
+
+const Symbol* getSymbolAtOrAfterAddress(SymbolTable symtab, uint64_t address) {
+  int64_t i = findSymbolByAddress(symtab, address);
+  if (i >= 0) {
+    return symtab->symbols[i];
+  } else {
+    i = -i - 1;
+    return (i < symtab->numSymbols) ? symtab->symbols[i] : NULL;
+  }
 }
 
 int addSymbolToTable(SymbolTable symtab, const char* name, uint64_t address) {

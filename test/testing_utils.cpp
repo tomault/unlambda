@@ -4,6 +4,7 @@ extern "C" {
 
 #include "testing_utils.hpp"
 #include <assert.h>
+#include <iomanip>
 #include <sstream>
 
 extern "C" {
@@ -45,7 +46,6 @@ namespace internal {
 
   return ::testing::AssertionSuccess();
 }
-
 
 template <typename ListType>
 static ::testing::AssertionResult& writeList(
@@ -411,6 +411,50 @@ void unl_test::handleCollectorError(VmMemory memory, uint64_t address,
     return ::testing::AssertionFailure()
       << "Array is " << unl_test::toString(startOfArray(a), arraySize(a))
       << ", but it should be " << unl_test::toString(trueData, trueSize);
+  }
+
+  return ::testing::AssertionSuccess();
+}
+
+static std::string dumpBytesInMemory(const uint8_t* const data,
+				     const uint8_t* const endOfData,
+				     const uint8_t* target) {
+  const uint8_t* start = std::max(data, target - 17);
+  const uint8_t* end = std::min(endOfData, target + 17);
+  std::ostringstream dataStr;
+
+  dataStr << "[";
+  if (start > data) {
+    dataStr << " ... ";
+  }
+  for (const uint8_t* pp = start; pp != end; ++pp) {
+    if (pp == target) {
+      dataStr << "**";
+    }
+    dataStr << " " << std::hex << std::setw(2) << std::setfill('0')
+	    << (uint32_t)*pp;
+  }
+  if (end < endOfData) {
+    dataStr << " ...";
+  }
+  dataStr << " ]";
+  return dataStr.str();
+}
+
+::testing::AssertionResult unl_test::verifyBytes(const uint8_t* data,
+						 const uint8_t* trueData,
+						 const uint64_t trueSize) {
+  const uint8_t* const endOfData = data + trueSize;
+  for (const uint8_t* p = data, *q = trueData; p != endOfData; ++p, ++q) {
+    if (*p != *q) {
+      uint64_t offset = p - data;
+
+      return ::testing::AssertionFailure()
+	<< "Data at offset " << offset << " is "
+	<< dumpBytesInMemory(data, endOfData, p)
+	<< ", but it should be "
+	<< dumpBytesInMemory(trueData, trueData + trueSize, q);
+    }
   }
 
   return ::testing::AssertionSuccess();

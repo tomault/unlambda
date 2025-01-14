@@ -23,7 +23,7 @@ static DebugCommand createDebugCommand(int32_t code) {
   return cmd;
 }
 
-DebugCommand createDisssassembleCommand(uint64_t address, uint32_t numLines) {
+DebugCommand createDisassembleCommand(uint64_t address, uint32_t numLines) {
   DebugCommand cmd = createDebugCommand(DISASSEMBLE_CMD);
   if (cmd) {
     cmd->args.disassemble.address = address;
@@ -42,7 +42,7 @@ DebugCommand createDumpBytesCommand(uint64_t address, uint32_t length) {
 }
 
 DebugCommand createWriteBytesCommand(uint64_t address, uint32_t length,
-				     uint8_t* bytes) {
+				     const uint8_t* bytes) {
   // Allocate and initialize the copy of the data to write the command
   // will use.  If this fails, quit before allocating the command itself
   uint8_t* data = (uint8_t*)malloc(length);
@@ -66,7 +66,7 @@ DebugCommand createDumpAddressStackCommand(uint64_t depth, uint64_t count) {
   DebugCommand cmd = createDebugCommand(DUMP_ADDRESS_STACK_CMD);
   if (cmd) {
     cmd->args.dumpStack.depth = depth;
-    cmd->args.dumpstack.count = count;
+    cmd->args.dumpStack.count = count;
   }
   return cmd;
 }
@@ -139,7 +139,7 @@ DebugCommand createAddBreakpointCommand(uint64_t address) {
 }
 
 DebugCommand createRemoveBreakpointCommand(uint64_t address) {
-  DebugCommand cmd = createDebugCommand();
+  DebugCommand cmd = createDebugCommand(REMOVE_BREAKPOINT_CMD);
   if (cmd) {
     cmd->args.removeBreakpoint.address = address;
   }
@@ -147,7 +147,7 @@ DebugCommand createRemoveBreakpointCommand(uint64_t address) {
 }
 
 DebugCommand createRunCommand(uint64_t address) {
-  DebugCommand cmd = createDebugCommand();
+  DebugCommand cmd = createDebugCommand(RUN_PROGRAM_CMD);
   if (cmd) {
     cmd->args.run.address = address;
   }
@@ -210,16 +210,17 @@ DebugCommand createCommandParseError(int32_t code, const char* details) {
   DebugCommand cmd = createDebugCommand(DEBUG_CMD_PARSE_ERROR);
   if (!cmd) {
     free((void*)errDetails);
+    return NULL;
   } else {
     cmd->args.errorDetails.code = code;
     cmd->args.errorDetails.details = errDetails;
+    return cmd;
   }
-  return cmd;
 }
 
 void destroyDebugCommand(DebugCommand cmd) {
   if (cmd) {
-    swtich (cmd->cmd) {
+    switch (cmd->cmd) {
       case WRITE_BYTES_CMD:
 	free((void*)cmd->args.writeBytes.data);
 	break;
@@ -294,7 +295,7 @@ int sprintDebugCommand(DebugCommand cmd, char* buffer, size_t bufferSize) {
       return snprintf(buffer, bufferSize, "%s %" PRIu64 " %" PRIu64,
 		      COMMAND_NAMES[cmd->cmd],
 		      cmd->args.dumpStack.depth,
-		      cmd->args.dumpBytes.count);
+		      cmd->args.dumpStack.count);
 
     case MODIFY_ADDRESS_STACK_CMD:
       return snprintf(buffer, bufferSize, "%s %" PRIu64 " %" PRIu64,
@@ -316,25 +317,19 @@ int sprintDebugCommand(DebugCommand cmd, char* buffer, size_t bufferSize) {
     case QUIT_VM_CMD:
     case SHOW_HELP_CMD:
       return snprintf(buffer, bufferSize, "%s", COMMAND_NAMES[cmd->cmd]);
-
-    case DUMP_CALL_STACK_CMD:
-      return snprintf(buffer, bufferSize, "%s %" PRIu64 " %" PRIu64,
-		      COMMAND_NAMES[cmd->cmd],
-		      cmd->args.dumpStack.depth,
-		      cmd->args.dumpstack.count);
       
     case MODIFY_CALL_STACK_CMD:
       return snprintf(buffer, bufferSize, "%s %" PRIu64 " %" PRIu64 " %" PRIu64,
 		      COMMAND_NAMES[cmd->cmd],
 		      cmd->args.modifyCallStack.depth,
 		      cmd->args.modifyCallStack.blockAddress,
-		      cmd->args.modifyCallstack.returnAddress);
+		      cmd->args.modifyCallStack.returnAddress);
 
     case PUSH_CALL_STACK_CMD:
       return snprintf(buffer, bufferSize, "%s %" PRIu64 " %" PRIu64,
 		      COMMAND_NAMES[cmd->cmd],
-		      cmd->args.modifyCallStack.blockAddress,
-		      cmd->args.modifyCallstack.returnAddress);
+		      cmd->args.pushCallStack.blockAddress,
+		      cmd->args.pushCallStack.returnAddress);
 
 
     case ADD_BREAKPOINT_CMD:
@@ -350,7 +345,7 @@ int sprintDebugCommand(DebugCommand cmd, char* buffer, size_t bufferSize) {
       return snprintf(buffer, bufferSize, "%s %" PRIu64,
 		      COMMAND_NAMES[cmd->cmd], cmd->args.run.address);
       
-    case HEAP_DUMP_CMP:
+    case HEAP_DUMP_CMD:
       if (cmd->args.heapDump.filename) {
 	return snprintf(buffer, bufferSize, "%s %s",
 			COMMAND_NAMES[cmd->cmd], cmd->args.heapDump.filename);
@@ -378,7 +373,7 @@ int sprintDebugCommand(DebugCommand cmd, char* buffer, size_t bufferSize) {
   }
 }
 
-struct ParserState {
+typedef struct ParserState_ {
   UnlambdaVM vm;               /** VM state for defaults */
   const char* text;            /** Text being parsed */
   const char* p;               /** Current position in text */
@@ -386,17 +381,17 @@ struct ParserState {
   const char* cmdText;         /** Text of command */
   int32_t errorCode;           /** Error code (0 = no error) */
   const char* errorDetails;    /** Error details */
-};
+} ParserState;
 
 
 static void initParserState(ParserState* state, UnlambdaVM vm,
 			    const char* text);
 static void cleanParserState(ParserState* state);
-static int skipBlanks(ParerState* state);
+static int skipBlanks(ParserState* state);
 static int32_t  parseCommandText(ParserState* state);
 static uint8_t  parseNextByte(ParserState* state);
 static uint32_t parseNextUInt32(ParserState* state);
-static iont32_t parseNextUInt32WithDefault(ParserState* state, uint32_t dv);
+static uint32_t parseNextUInt32WithDefault(ParserState* state, uint32_t dv);
 static uint64_t parseNextUInt64(ParserState* state);
 static uint64_t parseNextUInt64WithDefault(ParserState* state, uint64_t dv);
 static int checkNoMoreArguments(ParserState* state);
@@ -404,7 +399,7 @@ static DebugCommand makeParseErrorFromState(ParserState* state);
 static void setParseError(ParserState* state, int32_t code, const char* msg);
 static void clearParseError(ParserState* state);
 
-typedef DebugCommand (*)(ParserState*) CommandParserFn;
+typedef DebugCommand (*CommandParserFn)(ParserState*);
 
 static DebugCommand parseDisassembleCmd(ParserState* state);
 static DebugCommand parseDumpBytesCmd(ParserState* state);
@@ -457,14 +452,15 @@ static CommandParserFn CommandParsers[] = {
 
 DebugCommand parseDebugCommand(UnlambdaVM context, const char* text) {
   ParserState state;
-  initParserState(&state, vm, text);
+  initParserState(&state, context, text);
 
   int32_t cmdCode = parseCommandText(&state);
   if (!cmdCode) {
+    cleanParserState(&state);
     return NULL; // Line is blank
   } else if (cmdCode < 0) {
     // makeParseErrorFromState() cleans state before returning
-    return makeParseErrorFromState(state);
+    return makeParseErrorFromState(&state);
   } else {
     assert(cmdCode > 0);
     assert(cmdCode < (sizeof(CommandParsers) / sizeof(CommandParserFn)));
@@ -499,7 +495,7 @@ static void cleanParserState(ParserState* state) {
   }
 }
 
-static int skipBlanks(ParerState* state) {
+static int skipBlanks(ParserState* state) {
   while (*(state->p) && ((*(state->p) == ' ') || (*(state->p) == '\t'))) {
     ++(state->p);
   }
@@ -523,7 +519,7 @@ static int32_t parseCommandText(ParserState* state) {
 
   if (state->p == start) {
     // state->p points to some non-alnum char, which is a syntax error
-    setParseError(state, DEBUG_CMD_PARSE_SYNTAX_ERROR, "Syntax Error");
+    setParseError(state, DEBUG_CMD_PARSE_SYNTAX_ERROR, "Syntax error");
     return -1;
   }
 
@@ -533,18 +529,19 @@ static int32_t parseCommandText(ParserState* state) {
 		  "Could not allocate memory for command text");
     return -1;
   }
-  memcpy(state->cmdText, start, state->p - start);
-  state->cmdText[state->p - start] = 0;
+  memcpy((char*)state->cmdText, start, state->p - start);
+  ((char*)(state->cmdText))[state->p - start] = 0;
   
   // Linear search for command is good enough
   for (int i = 1; i < NUM_COMMANDS; ++i) {
-    if (!strncmp(start, COMMAND_NAMES[i], state->p - start)) {
+    if (!strcmp(state->cmdText, COMMAND_NAMES[i])) {
       // Found it
       state->cmdCode = i;
 
       // Make sure text after command is blank or end of string
-      if (*(state->p) && (*(state->p) != ' ') && (*(state->p) != '\t')) {
-	setParseError(state, DEBUG_CMD_PARSE_SYNTAX_ERROR, "Syntax Error");
+      if (*(state->p) && (*(state->p) != ' ') && (*(state->p) != '\t')
+	    && (*(state->p) != '\n')) {
+	setParseError(state, DEBUG_CMD_PARSE_SYNTAX_ERROR, "Syntax error");
 	return -1;
       }
       return state->cmdCode;
@@ -555,6 +552,7 @@ static int32_t parseCommandText(ParserState* state) {
   char msg[200];
   snprintf(msg, sizeof(msg), "Unknown command \"%s\".  Use h to print a "
 	   "list of commands", state->cmdText);
+  setParseError(state, DEBUG_CMD_UNKNOWN_CMD_ERROR, msg);
   state->cmdCode = -1;
   return -1;
 }
@@ -589,6 +587,9 @@ static uint32_t parseNextUInt32WithDefault(ParserState* state, uint32_t dv) {
   return result;
 }
 
+static uint64_t MAXU64_DIV_10 = (uint64_t)0xFFFFFFFFFFFFFFFF / 10;
+static uint64_t MAXU64_MOD_10 = (uint64_t)0xFFFFFFFFFFFFFFFF % 10;
+
 static uint64_t parseNextUInt64(ParserState* state) {
   uint64_t result = 0;
   int c = skipBlanks(state);
@@ -599,19 +600,19 @@ static uint64_t parseNextUInt64(ParserState* state) {
   }
 
   while (c && isdigit(c)) {
-    uint64_t nextResult = result * 10 + (c - '0');
-    if (nextResult < result) {
+    if ((result > MAXU64_DIV_10)
+	  || ((result == MAXU64_DIV_10) && (c > MAXU64_MOD_10))) {
       // Overflow
       setParseError(state, DEBUG_CMD_PARSE_INVALID_ARG_ERROR,
 		    "Value is too large");
       return 0;
     }
 
-    result = nextResult;
+    result = result * 10 + (c - '0');
     c = *(++(state->p));
   }
 
-  if (c && (c != ' ') && (c != '\t')) {
+  if (c && (c != ' ') && (c != '\t') && (c != '\n')) {
     // Value is not a number
     setParseError(state, DEBUG_CMD_PARSE_INVALID_ARG_ERROR,
 		  "Value is not a number");
@@ -643,7 +644,7 @@ static uint64_t parseNextAddress(ParserState* state) {
     // Symbol with optional displacement
     const char* start = state->p;
     while (*(state->p) && (isalnum(*(state->p)) || (*(state->p) == '_'))) {
-      ++(*p)
+      ++(state->p);
     }
     assert(state->p > start);
 
@@ -652,7 +653,7 @@ static uint64_t parseNextAddress(ParserState* state) {
     memcpy(name, start, state->p - start);
     name[state->p - start] = 0;
 
-    Symbol* sym = findSymbol(getVmSymbolTable(state->vm), name);
+    const Symbol* sym = findSymbol(getVmSymbolTable(state->vm), name);
     if (!sym) {
       char msg[200];
       snprintf(msg, sizeof(msg), "Unknown symbol \"%s\"", name);
@@ -681,7 +682,7 @@ static uint64_t parseNextAddress(ParserState* state) {
       }
 
       address += disp;
-    } else if (*(state->p == '-')) {
+    } else if (*(state->p) == '-') {
       ++(state->p);
 
       uint64_t disp = parseNextUInt64(state);
@@ -698,7 +699,8 @@ static uint64_t parseNextAddress(ParserState* state) {
       }
 
       address -= disp;
-    } else if (*(state->p) && (*(state->p) != ' ') && (*(state->p) != '\t')) {
+    } else if (*(state->p) && (*(state->p) != ' ') && (*(state->p) != '\t')
+	       && (*(state->p) != '\n')) {
       setParseError(state, DEBUG_CMD_PARSE_SYNTAX_ERROR, "Syntax error");
       return 0;
     }
@@ -713,7 +715,13 @@ static uint64_t parseNextAddressWithDefault(ParserState* state, uint64_t dv) {
 }
 
 static int checkNoMoreArguments(ParserState* state) {
-  if (skipBlanks(state)) {
+  int next = skipBlanks(state);
+
+  while (next == '\n') {
+    next = *(++(state->p));
+  }
+  
+  if (next) {
     setParseError(state, DEBUG_CMD_PARSE_SYNTAX_ERROR, "Too many arguments");
     return -1;
   }
@@ -772,7 +780,7 @@ static int checkArgumentParsed(ParserState* state, const char* argName) {
 
       case DEBUG_CMD_UNKNOWN_CMD_ERROR:
 	snprintf(msg, sizeof(msg), "Received an \"Unknown command\" error"
-		 "parsing the \"%s\", argument.  How did this happen??!!",
+		 "parsing the \"%s\", argument.  How did this happen???",
 		 argName);
 	break;
 
@@ -796,11 +804,11 @@ static int checkArgumentParsed(ParserState* state, const char* argName) {
 static DebugCommand parseDisassembleCmd(ParserState* state) {
   static const uint32_t DEFAULT_NUM_LINES = 10;
 
-  uint64_t address = parseNextAddressWithDefault(state, getVmPC(vm));
+  uint64_t address = parseNextAddressWithDefault(state, getVmPC(state->vm));
   if (checkArgumentParsed(state, "address")) {
     return makeParseErrorFromState(state);
   }
-  
+
   uint32_t numLines = parseNextUInt32WithDefault(state, DEFAULT_NUM_LINES);
   if (checkArgumentParsed(state, "number of lines")) {
     return makeParseErrorFromState(state);
@@ -810,7 +818,7 @@ static DebugCommand parseDisassembleCmd(ParserState* state) {
     return makeParseErrorFromState(state);
   }
 
-  return createDisssassembleCommand(address, numLines);
+  return createDisassembleCommand(address, numLines);
 }
 
 static DebugCommand parseDumpBytesCmd(ParserState* state) {
@@ -835,12 +843,12 @@ static DebugCommand parseDumpBytesCmd(ParserState* state) {
 static DebugCommand parseWriteBytesCmd(ParserState* state) {
   static const uint32_t MAX_DATA_LENGTH = 65536;
   uint64_t address = parseNextAddress(state);
-  if (checkArgumentParsed(state)) {
+  if (checkArgumentParsed(state, "address")) {
     return makeParseErrorFromState(state);
   }
 
   Array data = createArray(0, MAX_DATA_LENGTH);
-  uint8_t v = parseNextUInt8(state);
+  uint8_t v = parseNextByte(state);
   while (!state->errorCode) {
     if (appendToArray(data, &v, 1)) {
       if (getArrayStatus(data) == ArraySequenceTooLongError) {
@@ -852,7 +860,7 @@ static DebugCommand parseWriteBytesCmd(ParserState* state) {
       destroyArray(data);
       return makeParseErrorFromState(state);
     }
-    v = parseNextUInt8(state);
+    v = parseNextByte(state);
   }
 
   if (state->errorCode != DEBUG_CMD_PARSE_MISSING_ARG_ERROR) {
@@ -907,7 +915,7 @@ static DebugCommand parseModifyAddrStackCmd(ParserState* state) {
     return makeParseErrorFromState(state);
   }
 
-  return createModifyCallStackCommand(depth, value);
+  return createModifyAddressStackCommand(depth, value);
 }
 
 static DebugCommand parsePushAddreessCmd(ParserState* state) {
@@ -1120,7 +1128,7 @@ static DebugCommand parseLookupSymbolCmd(ParserState* state) {
     setParseError(state, DEBUG_CMD_PARSE_MISSING_ARG_ERROR,
 		  "Symbol name missing");
     return makeParseErrorFromState(state);
-  } elif (!isalpha(c) && (c != '_')) {
+  } else if (!isalpha(c) && (c != '_')) {
     setParseError(state, DEBUG_CMD_PARSE_INVALID_ARG_ERROR,
 		  "Invalid symbol name");
     return makeParseErrorFromState(state);
@@ -1132,6 +1140,18 @@ static DebugCommand parseLookupSymbolCmd(ParserState* state) {
   }
 
   assert(state->p > start);
+
+  if (*(state->p) && (*(state->p) != ' ') && (*(state->p) != '\t')
+        && (*(state->p) != '\n')) {
+    setParseError(state, DEBUG_CMD_PARSE_INVALID_ARG_ERROR,
+		  "Invalid symbol name");
+    return makeParseErrorFromState(state);
+  }
+  
+  if (checkNoMoreArguments(state)) {
+    return makeParseErrorFromState(state);
+  }
+  
   char* name = (char*)malloc(state->p - start + 1);
   memcpy(name, start, state->p - start);
   name[state->p - start] = 0;

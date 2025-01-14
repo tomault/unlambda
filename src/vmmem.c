@@ -28,6 +28,9 @@ typedef struct VmMemoryImpl_ {
   /** Address of first free block */
   uint64_t firstFree;
 
+  /** Logger this VmMemory uses to write debugging & info messages */
+  Logger logger;
+
   /** Current status.  0 == no error */
   int statusCode;
 
@@ -135,6 +138,7 @@ VmMemory createVmMemory(uint64_t initialSize, uint64_t maxSize) {
   memory->heapStart = 0;
   memory->bytesFree = initialSize - sizeof(HeapBlock);
   memory->firstFree = 0;
+  memory->logger = NULL;
   memory->statusCode = 0;
   memory->statusMsg = OK_MSG;
 
@@ -186,6 +190,14 @@ static void setVmmStatus(VmMemory memory, int statusCode,
     strcpy((char*)memory->statusMsg, statusMsg);
   }
   memory->statusCode = statusCode;
+}
+
+Logger getVmmLogger(VmMemory memory) {
+  return memory->logger;
+}
+
+void setVmmLogger(VmMemory memory, Logger logger) {
+  memory->logger = logger;
 }
 
 uint64_t currentVmmSize(VmMemory memory) {
@@ -253,6 +265,16 @@ int reserveVmMemoryForProgram(VmMemory memory, uint64_t size) {
     memory->bytesFree = 0;
     memory->firstFree = 0;
   }
+
+  logMessage(memory->logger, LogGeneralInfo,
+	     "Heap starts at %" PRIu64 " and occupies %" PRIu64 " bytes with %"
+	     PRIu64 " bytes free", memory->heapStart, vmmHeapSize(memory),
+	     vmmBytesFree(memory));
+  logMessage(memory->logger, LogGeneralInfo,
+	     "VM memory size is %" PRIu64 "/%" PRIu64,
+	     currentVmmSize(memory), maxVmmSize(memory));
+  logMessage(memory->logger, LogGC1, "First free block is at %" PRIu64,
+	     memory->firstFree);
   return 0;
 }
 
@@ -416,10 +438,14 @@ int collectUnreachableVmmBlocks(VmMemory memory, Stack callStack,
 				Stack addressStack,
 				GcErrorHandler errorHandler,
 				void* errorContext) {
+  logMessage(memory->logger, LogGC1, "Start collection of unreachable blocks");
+
   /** Clear the marks on all the blocks */
+  logMessage(memory->logger, LogGC1, "Clear block marks");
   forEachVmmBlock(memory, clearBlockMark, NULL);
 
   /** Mark all blocks reachable from the call stack */
+  logMessage(memory->logger, LogGC1, "Mark blocks reachable from call stack");
   for (uint64_t* p = (uint64_t*)bottomOfStack(callStack);
        p < (uint64_t*)topOfStack(callStack);
        p += 2) {
@@ -428,6 +454,8 @@ int collectUnreachableVmmBlocks(VmMemory memory, Stack callStack,
   }
 
   /** Mark all blocks reachable from the address stack */
+  logMessage(memory->logger, LogGC1,
+	     "Mark blocks reachable from address stack");
   for (uint64_t* p = (uint64_t*)bottomOfStack(addressStack);
        p < (uint64_t*)topOfStack(addressStack);
        ++p) {
@@ -435,7 +463,10 @@ int collectUnreachableVmmBlocks(VmMemory memory, Stack callStack,
     visitBlock(memory, *p, errorHandler, errorContext);
   }
 
-  return collectUnmarkedBlocks(memory, errorHandler, errorContext);
+  logMessage(memory->logger, LogGC1, "Collect unmarked blocks");
+  int result = collectUnmarkedBlocks(memory, errorHandler, errorContext);
+  logMessage(memory->logger, LogGC1, "End collection of unreachable blocks");
+  return result;
 }
 
 static void visitBlock(VmMemory memory, uint64_t address,
@@ -448,6 +479,9 @@ static void visitBlock(VmMemory memory, uint64_t address,
     if (!vmmBlockIsMarked(block)) {
       const int blockType = getVmmBlockType(block);
 
+      logMessage(memory->logger, LogGC2,
+		 "Visit block at %" PRIu64 " with type %d", address, blockType);
+		 
       setVmmBlockMark(block);
 
       if (blockType == VmmFreeBlockType) {
@@ -539,6 +573,8 @@ static int collectUnmarkedBlocks(VmMemory memory,
   HeapBlock* p = firstHeapBlockInVmm(memory);
   HeapBlock* prev = NULL;
   FreeBlock* prevFree = NULL;
+  uint64_t numBlocksCollected = 0;
+  uint64_t numBlocksKept = 0;
 
   memory->bytesFree = 0;
   memory->firstFree = 0;
@@ -546,6 +582,8 @@ static int collectUnmarkedBlocks(VmMemory memory,
   while (p) {
     /** Get the next block now, since we may overwrite the current block */
     HeapBlock* const next = nextHeapBlockInVmm(memory, p);
+    uint64_t blockAddress = vmmAddressForPtr(memory,
+					     (uint8_t*)p + sizeof(HeapBlock));
     
     /**
     printf("prev = %p, prevFree = %p, p = %p, next = %p\n", prev, prevFree, p,
@@ -561,8 +599,11 @@ static int collectUnmarkedBlocks(VmMemory memory,
 
     if (vmmBlockIsMarked(p)) {
       /* printf("Clear mark\n"); */
+      logMessage(memory->logger, LogGC2, "Keep marked block at %" PRIu64,
+		 blockAddress);
       clearVmmBlockMark(p);
       prev = p;
+      ++numBlocksKept;
     } else {
       assert(!prev || !vmmBlockIsMarked(prev));
       
@@ -572,6 +613,13 @@ static int collectUnmarkedBlocks(VmMemory memory,
 	assert((HeapBlock*)prevFree == prev);
 	assert(((FreeBlock*)prev)->next == 0);
 
+	logMessage(memory->logger, LogGC2,
+		   "Coalesce unreferenced block at %" PRIu64
+		   " into previous free block at %" PRIu64,
+		   blockAddress,
+		   vmmAddressForPtr(memory,
+				    (uint8_t*)prev + sizeof(HeapBlock)));
+	
 	/** Coalesce block into previous free block */
 	const uint64_t blockSize = sizeof(HeapBlock) + getVmmBlockSize(p);
 	setVmmBlockSize(prev, getVmmBlockSize(prev) + blockSize);
@@ -580,6 +628,9 @@ static int collectUnmarkedBlocks(VmMemory memory,
 	/* printf("Change to free block\n"); */
 	/** Change to free block */
 	assert(getVmmBlockSize(p) >= 8);
+
+	logMessage(memory->logger, LogGC2,
+		   "Change block at %" PRIu64 " to free block", blockAddress);
 	
 	setVmmBlockType(p, VmmFreeBlockType);
 	((FreeBlock*)p)->next = 0;
@@ -596,6 +647,7 @@ static int collectUnmarkedBlocks(VmMemory memory,
 	prev = p;
 	prevFree = (FreeBlock*)p;
       }
+      ++numBlocksCollected;
     }
 
     p = next;
@@ -609,6 +661,8 @@ static int collectUnmarkedBlocks(VmMemory memory,
     /* printf("Verify free byte count\n"); */
     FreeBlock *q = firstFreeBlockInVmm(memory);
     uint64_t bytesFree = 0;
+
+    logMessage(memory->logger, LogGC1, "Check free bytes count");
     
     while (q) {
       bytesFree += getVmmBlockSize((HeapBlock*)q);
@@ -629,6 +683,10 @@ static int collectUnmarkedBlocks(VmMemory memory,
     }
   }
 
+  logMessage(memory->logger, LogGC1,
+	     "Collected %" PRIu64 " blocks and kept %" PRIu64 ".  %" PRIu64
+	     "/%" PRIu64 " bytes free", numBlocksCollected, numBlocksKept,
+	     vmmBytesFree(memory), vmmHeapSize(memory));
   return 0;
 }
 
@@ -678,6 +736,15 @@ static HeapBlock* splitFreeBlock(VmMemory memory, FreeBlock* block,
   const uint64_t remaining = getVmmBlockSize((HeapBlock*)block) - size;
   if (remaining < MIN_FREE_BLOCK_SIZE) {
     /** Allocate the whole block */
+    if (loggingModuleIsEnabled(memory->logger, LogGC2)) {
+      uint64_t blockAddress =
+	vmmAddressForPtr(memory, (uint8_t*)block + sizeof(HeapBlock));
+      logMessage(memory->logger, LogGC2, "Allocate entire block at %" PRIu64
+		 " with size %" PRIu64 " to satisfy a request for %" PRIu64
+		 " bytes", blockAddress, getVmmBlockSize((HeapBlock*)block),
+		 size);
+    }
+    
     if (prev) {
       prev->next = block->next;
     } else {
@@ -688,8 +755,19 @@ static HeapBlock* splitFreeBlock(VmMemory memory, FreeBlock* block,
     memory->bytesFree -= getVmmBlockSize((HeapBlock*)block);
     return (HeapBlock*)block;
   } else {
-    /** Split the free block in two */
+    /** Split the free block in two */    
     uint8_t* newFreeBlock = ((uint8_t*)block) + size + sizeof(HeapBlock);
+    if (loggingModuleIsEnabled(memory->logger, LogGC2)) {
+      uint64_t blockAddress =
+	vmmAddressForPtr(memory, (uint8_t*)block + sizeof(HeapBlock));
+      uint64_t newBlockAddress = vmmAddressForPtr(memory, newFreeBlock);
+      logMessage(memory->logger, LogGC2, "Split free block at %" PRIu64
+		 " with size %" PRIu64 " into an allocated block of size %"
+		 PRIu64 " and a new free block at %" PRIu64 " with size %"
+		 PRIu64, blockAddress, getVmmBlockSize((HeapBlock*)block),
+		 size, newBlockAddress, remaining - sizeof(HeapBlock));
+    }
+    
     writeFreeBlock(newFreeBlock, remaining - sizeof(HeapBlock), block->next);
     if (prev) {
       prev->next = newFreeBlock - memory->bytes;
@@ -777,6 +855,9 @@ int increaseVmmSize(VmMemory memory) {
     }
   }
 
+  logMessage(memory->logger, LogGeneralInfo,
+	     "Increase VM memory size to %" PRIu64 "/%" PRIu64,
+	     currentVmmSize(memory), maxVmmSize(memory));
   return 0;
 }
 

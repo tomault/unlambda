@@ -74,3 +74,38 @@ target_link_directories(vm_tests PUBLIC "/usr/local/lib")
 target_link_libraries(vm_tests libunlambda)
 target_link_libraries(vm_tests gtest_main gtest)
 target_link_libraries(vm_tests pthread)
+
+add_executable(dbgcmd_tests dbgcmd_tests.cpp testing_utils.cpp)
+
+target_include_directories(dbgcmd_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(dbgcmd_tests PRIVATE ...)
+
+target_link_directories(dbgcmd_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(dbgcmd_tests libunlambda)
+target_link_libraries(dbgcmd_tests gtest_main gtest)
+target_link_libraries(dbgcmd_tests pthread)
+
+add_executable(debug_tests debug_tests.cpp testing_utils.cpp)
+
+target_include_directories(debug_tests PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(debug_tests PRIVATE ...)
+
+target_link_directories(debug_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(debug_tests libunlambda)
+target_link_libraries(debug_tests gtest_main gtest)
+target_link_libraries(debug_tests pthread)
+
+add_executable(vm_instructions_tests vm_instructions_tests.cpp)
+
+target_include_directories(vm_instructions_tests PUBLIC
+                           ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(vm_instructions_tests PRIVATE ...)
+
+target_link_directories(vm_instructions_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(vm_instructions_tests libunlambda)
+target_link_libraries(vm_instructions_tests gtest_main gtest)
+target_link_libraries(vm_instructions_tests pthread)
+

@@ -1,9 +1,11 @@
 #include "brkpt.h"
 #include "debug.h"
+#include "logging.h"
 #include "stack.h"
 #include "vm.h"
 #include "vm_instructions.h"
 
+#include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -24,6 +26,13 @@ const char OK_MSG[] = "OK";
 const char DEFAULT_ERR_MSG[] = "ERROR";
 
 const uint32_t MAX_TEMP_BREAKPOINTS = 32;
+
+const int DebuggerIllegalArgumentError = -1;
+const int DebuggerInvalidCommandError = -2;
+const int DebuggerCommandExecutionError = -3;
+const int DebuggerResumeExecution = -4;
+const int DebuggerQuitVm = -5;
+const int DebuggerOperationFailedError = -6;
 
 Debugger createDebugger(UnlambdaVM vm, uint32_t maxBreakpoints) {
   Debugger dbg = (Debugger)malloc(sizeof(DebuggerImpl));
@@ -66,7 +75,7 @@ const char* getDebuggerStatusMsg(Debugger dbg) {
 }
 
 static int shouldDeallocateStatusMsg(Debugger dbg) {
-  return dbg->statusMsg && (dbg-statusMsg != OK_MSG)
+  return dbg->statusMsg && (dbg->statusMsg != OK_MSG)
            && (dbg->statusMsg != DEFAULT_ERR_MSG);
 }
 
@@ -89,11 +98,34 @@ static void setDebuggerStatus(Debugger dbg, int code, const char* msg) {
   } else {
     dbg->statusMsg = malloc(strlen(msg) + 1);
     if (dbg->statusMsg) {
-      strcpy(dbg->statusMsg, msg);
+      strcpy((char*)dbg->statusMsg, msg);
     } else {
       dbg->statusMsg = DEFAULT_ERR_MSG;
     }
   }
+}
+
+UnlambdaVM getDebuggerVm(Debugger dbg) {
+  return dbg->vm;
+}
+
+BreakpointList getDebuggerPersistentBreakpoints(Debugger dbg) {
+  return dbg->persistentBreakpoints;
+}
+
+BreakpointList getDebuggerTransientBreakpoints(Debugger dbg) {
+  return dbg->temporaryBreakpoints;
+}
+
+int clearDebuggerTransientBreakpoints(Debugger dbg) {
+  if (clearBreakpointList(dbg->temporaryBreakpoints)) {
+    char msg[200];
+    snprintf(msg, sizeof(msg), "Failed to clear transient breakpoints (%s)",
+	     getBreakpointListStatusMsg(dbg->temporaryBreakpoints));
+    setDebuggerStatus(dbg, DebuggerOperationFailedError, msg);
+    return -1;
+  }
+  return 0;
 }
 
 int shouldBreakExecution(Debugger dbg) {
@@ -102,7 +134,7 @@ int shouldBreakExecution(Debugger dbg) {
            || isAtBreakpoint(dbg->temporaryBreakpoints, getVmPC(dbg->vm));
 }
 
-typedef int (*)(Debugger, DebugCommand) DebugCommandHandler;
+typedef int (*DebugCommandHandler)(Debugger, DebugCommand);
 
 static int executeDisassembleCmd(Debugger dbg, DebugCommand cmd);
 static int executeDumpBytesCmd(Debugger dbg, DebugCommand cmd);
@@ -170,7 +202,7 @@ int executeDebugCommand(Debugger dbg, DebugCommand cmd) {
     char msg[200];
     snprintf(msg, sizeof(msg), "Unknown debugger command with code %" PRId32,
 	     cmd->cmd);
-    setDebuggerStatus(dbg, DebuggerIllegalArgumentError, ms);
+    setDebuggerStatus(dbg, DebuggerIllegalArgumentError, msg);
     return -1;
   } else {
     return debugCommandHandlers[cmd->cmd](dbg, cmd);
@@ -219,8 +251,8 @@ static int executeDumpBytesCmd(Debugger dbg, DebugCommand cmd) {
   const uint8_t* startOfMemory = ptrToVmMemory(getVmMemory(dbg->vm));
   const uint8_t* endOfMemory = ptrToVmMemoryEnd(getVmMemory(dbg->vm));
   const uint8_t* end = p + cmd->args.dumpBytes.length;
-  if (p > endOfMemory) {
-    p = endOfMemory;
+  if (end > endOfMemory) {
+    end = endOfMemory;
   }
 
   int cnt = 0;
@@ -228,7 +260,7 @@ static int executeDumpBytesCmd(Debugger dbg, DebugCommand cmd) {
     if (!cnt) {
       fprintf(stdout, "%21" PRIu64, (p - startOfMemory));
     }
-    fprintf(stdout, " %3" PRIu8, *p);
+    fprintf(stdout, " %2" PRIx8, *p);
     if (++cnt == 16) {
       fprintf(stdout, "\n");
       cnt = 0;
@@ -244,7 +276,7 @@ static int executeDumpBytesCmd(Debugger dbg, DebugCommand cmd) {
 }
 
 static int executeWriteBytesCmd(Debugger dbg, DebugCommand cmd) {
-  const uint8_t* p = ptrToVmAddress(dbg->vm, cmd->args.writeBytes.address);
+  uint8_t* p = ptrToVmAddress(dbg->vm, cmd->args.writeBytes.address);
   if (!p) {
     char msg[200];
     snprintf(msg, sizeof(msg), "Invalid address %" PRIu64,
@@ -304,9 +336,12 @@ static int executeModifyAddressStackCmd(Debugger dbg, DebugCommand cmd) {
     return -1;
   }
 
-  uint64_t* top = (const uint64_t*)(topOfStack(s) - 8);
+  uint64_t* top = (uint64_t*)(topOfStack(s) - 8);
   top[-cmd->args.modifyAddrStack.depth] = cmd->args.modifyAddrStack.address;
-
+  logAddressStack(getVmLogger(dbg->vm), s,
+		  vmmAddressForPtr(getVmMemory(dbg->vm),
+				   getVmmHeapStart(getVmMemory(dbg->vm))),
+		  getVmSymbolTable(dbg->vm));
   return 0;
 }
 
@@ -322,6 +357,10 @@ static int executePushAddressStackCmd(Debugger dbg, DebugCommand cmd) {
     return -1;
   }
 
+  logAddressStack(getVmLogger(dbg->vm), s,
+		  vmmAddressForPtr(getVmMemory(dbg->vm),
+				   getVmmHeapStart(getVmMemory(dbg->vm))),
+		  getVmSymbolTable(dbg->vm));
   return 0;
 }
 
@@ -336,6 +375,10 @@ static int executePopAddressStackCmd(Debugger dbg, DebugCommand cmd) {
     return -1;
   }
 
+  logAddressStack(getVmLogger(dbg->vm), s,
+		  vmmAddressForPtr(getVmMemory(dbg->vm),
+				   getVmmHeapStart(getVmMemory(dbg->vm))),
+		  getVmSymbolTable(dbg->vm));
   return 0;
 }
 
@@ -348,6 +391,7 @@ static int executeDumpCallStackCmd(Debugger dbg, DebugCommand cmd) {
     snprintf(msg, sizeof(msg), "Call stack only has %" PRIu64 " frames",
 	     numFrames);
     setDebuggerStatus(dbg, DebuggerInvalidCommandError, msg);
+    return -1;
   }
 
   uint64_t end = cmd->args.dumpStack.depth + cmd->args.dumpStack.count;
@@ -357,7 +401,7 @@ static int executeDumpCallStackCmd(Debugger dbg, DebugCommand cmd) {
 
   const uint64_t* top = (const uint64_t*)(topOfStack(s) - 16);
   for (uint64_t i = cmd->args.dumpStack.depth; i < end; ++i) {
-    fprintf(stdout, "%21" PRIu64, " %21" PRIu64 " %21" PRIu64 "\n",
+    fprintf(stdout, "%21" PRIu64 " %21" PRIu64 " %21" PRIu64 "\n",
 	    i, top[-2 * i], top[1 - 2 * i]);
   }
 
@@ -373,14 +417,19 @@ static int executeModifyCallStackCmd(Debugger dbg, DebugCommand cmd) {
     snprintf(msg, sizeof(msg), "Call stack only has %" PRIu64 " frames",
 	     numFrames);
     setDebuggerStatus(dbg, DebuggerInvalidCommandError, msg);
+    return -1;
   }
 
-  const uint64_t* top = (const uint64_t*)(topOfStack(s) - 16);
+  uint64_t* top = (uint64_t*)(topOfStack(s) - 16);
   top[-2 * cmd->args.modifyCallStack.depth] =
     cmd->args.modifyCallStack.blockAddress;
   top[1 - 2 * cmd->args.modifyCallStack.depth] =
     cmd->args.modifyCallStack.returnAddress;
 
+  logCallStack(getVmLogger(dbg->vm), s,
+	       vmmAddressForPtr(getVmMemory(dbg->vm),
+				getVmmHeapStart(getVmMemory(dbg->vm))),
+	       getVmSymbolTable(dbg->vm));
   return 0;
 }
 
@@ -398,6 +447,10 @@ static int executePushCallStackCmd(Debugger dbg, DebugCommand cmd) {
     return -1;
   }
 
+  logCallStack(getVmLogger(dbg->vm), s,
+	       vmmAddressForPtr(getVmMemory(dbg->vm),
+				getVmmHeapStart(getVmMemory(dbg->vm))),
+	       getVmSymbolTable(dbg->vm));
   return 0;
 }
 
@@ -418,20 +471,24 @@ static int executePopCallStackCmd(Debugger dbg, DebugCommand cmd) {
     snprintf(msg, sizeof(msg), "Pop from call stack failed (%s)",
 	     getStackStatusMsg(s));
 
-    assert(!pushStack(s, &blockAddress, sizeof(returnAddress)));
+    assert(!pushStack(s, &returnAddress, sizeof(returnAddress)));
     setDebuggerStatus(dbg, DebuggerCommandExecutionError, msg);
     return -1;
   }
 
+  logCallStack(getVmLogger(dbg->vm), s,
+	       vmmAddressForPtr(getVmMemory(dbg->vm),
+				getVmmHeapStart(getVmMemory(dbg->vm))),
+	       getVmSymbolTable(dbg->vm));
   return 0;
 }
 
 static int executeListBreakpointsCmd(Debugger dbg, DebugCommand cmd) {
   for (const uint64_t* p = startOfBreakpointList(dbg->persistentBreakpoints);
-       p != dbg->endOfBreakpointList(dbg->persistentBreakpoints);
+       p != endOfBreakpointList(dbg->persistentBreakpoints);
        ++p) {
-    fprintf(stdout, "%11" PRIu32 " %21\n" PRIu64,
-	    (p - startOfBreakpoints(dbg->persistentBreakpoints), *p));
+    const size_t index = p - startOfBreakpointList(dbg->persistentBreakpoints);
+    fprintf(stdout, "%11zu %21" PRIu64 "\n", index, *p);
   }
   fprintf(stdout, "----------- ---------------------\n");
   fprintf(stdout, "%11" PRIu32 " breakpoints\n",
@@ -450,6 +507,9 @@ static int executeAddBreakpointCmd(Debugger dbg, DebugCommand cmd) {
     return -1;
   }
 
+  logMessage(getVmLogger(dbg->vm), LogInstructions,
+	     "Add persistent breakpoint: %" PRIu64,
+	     cmd->args.addBreakpoint.address);
   return 0;
 }
 
@@ -462,6 +522,9 @@ static int executeRemoveBreakpointCmd(Debugger dbg, DebugCommand cmd) {
     setDebuggerStatus(dbg, DebuggerCommandExecutionError, msg);
     return -1;
   }
+  logMessage(getVmLogger(dbg->vm), LogInstructions,
+	     "Remove persistent breakpoint: %" PRIu64,
+	     cmd->args.removeBreakpoint.address);
   return 0;
 }
 
@@ -478,6 +541,9 @@ static int executeRunProgramCmd(Debugger dbg, DebugCommand cmd) {
   setVmPC(dbg->vm, cmd->args.run.address);
   setDebuggerStatus(dbg, DebuggerResumeExecution, "Resume execution");
   dbg->breakOnNext = 0;
+
+  logMessage(getVmLogger(dbg->vm), LogInstructions,
+	     "Resume execution at %" PRIu64, cmd->args.run.address);
   return 0;
 }
 
@@ -491,16 +557,21 @@ static int executeRunUntilReturnCmd(Debugger dbg, DebugCommand cmd) {
   }
 
   const uint64_t* pReturn = (const uint64_t*)(topOfStack(callStack) - 8);
-  if (!addBreakpointToList(dbg->temporaryBreakpoints, *pReturn)) {
+  if (addBreakpointToList(dbg->temporaryBreakpoints, *pReturn)) {
     char msg[200];
     snprintf(msg, sizeof(msg), "Failed to set temporary breakpoint (%s)",
 	     getBreakpointListStatusMsg(dbg->temporaryBreakpoints));
     setDebuggerStatus(dbg, DebuggerCommandExecutionError, msg);
     return -1;
   }
-
+  logMessage(getVmLogger(dbg->vm), LogInstructions,
+	     "Add temporary breakpoint at %" PRIu64, *pReturn);
+  
   setDebuggerStatus(dbg, DebuggerResumeExecution, "Resume execution");
   dbg->breakOnNext = 0;
+
+  logMessage(getVmLogger(dbg->vm), LogInstructions,
+	     "Resume execution at %" PRIu64, getVmPC(dbg->vm));
   return 0;
 }
 
@@ -513,7 +584,7 @@ static int executeSingleStepIntoCmd(Debugger dbg, DebugCommand cmd) {
 static int executeSingleStepOverCmd(Debugger dbg, DebugCommand cmd) {
   uint64_t pc = getVmPC(dbg->vm);
   uint8_t* pcp = ptrToVmPC(dbg->vm);
-  
+
   if (!isValidVmmAddress(getVmMemory(dbg->vm), pc)) {
     char msg[200];
     snprintf(msg, sizeof(msg),
@@ -523,16 +594,16 @@ static int executeSingleStepOverCmd(Debugger dbg, DebugCommand cmd) {
   }
 
   pc += instructionSize(*pcp);
-  if (!isValidVmmAddress(getVmMemory(dbg->vm), pc)) {
-    setDebuggerStatus(dbg, DebuggerCommandExecutionError,
-		      "No next instruction.  PC is at the last instruction "
-		      "in memory");
-    return -1;
+  if (isValidVmmAddress(getVmMemory(dbg->vm), pc)) {
+    addBreakpointToList(dbg->temporaryBreakpoints, pc);
+    logMessage(getVmLogger(dbg->vm), LogInstructions,
+	       "Add temporary breakpoint at %" PRIu64, pc);
   }
-
-  addBreakpointToList(dbg->temporaryBreakpoints, pc);
+  
   setDebuggerStatus(dbg, DebuggerResumeExecution, "Resume execution");
   dbg->breakOnNext = 0;
+  logMessage(getVmLogger(dbg->vm), LogInstructions,
+	     "Resume execution at %" PRIu64, getVmPC(dbg->vm));
   return 0;
 }
 
@@ -541,32 +612,25 @@ static void performHeapDump(FILE* out, VmMemory memory) {
   uint64_t blockCount = 0;
 
   while (p) {
+    const uint8_t blockType = getVmmBlockType(p);
+
     fprintf(out, "%21" PRIu64 " %21" PRIu64 " %1s ",
-	    vmmAddressForPtr(memory, p), getVmmBlockSize(p),
+	    vmmAddressForPtr(memory, (uint8_t*)p), getVmmBlockSize(p),
 	    vmmBlockIsMarked(p) ? "X" : " ");
-    
-    switch (getVmmBlockType(p)) {
-      case VmmFreeBlockType:
-	fprintf(out, "FREE next=%" PRIu64 "\n",
-		((FreeBlock*)p)->next);
-	break;
 
-      case VmmCodeBlockType:
-	fprintf(out, "CODE\n");
-	break;
-
-      case VmmStateBlockType:
-	fprintf(out, "STATE (as=%" PRIu64 ", cs=%" PRIu64 ")\n",
+    if (blockType == VmmFreeBlockType) {
+      fprintf(out, "FREE next=%" PRIu64 "\n", ((FreeBlock*)p)->next);
+    } else if (blockType == VmmCodeBlockType) {
+      fprintf(out, "CODE\n");
+    } else if (blockType == VmmStateBlockType) {
+	fprintf(out, "STATE (as=%" PRIu32 ", cs=%" PRIu32 ")\n",
 		((VmStateBlock*)p)->addressStackSize,
 		((VmStateBlock*)p)->callStackSize);
-	break;
-
-      default:
-	fprintf(out, "**UNKNOWN (type=%" PRIu32 ")\n",
-		(uint32_t)getVmmBlockType(p));
-	break;
+    } else {
+      fprintf(out, "**UNKNOWN (type=%" PRIu32 ")\n", (uint32_t)blockType);
     }
-    p = nextHeapBlockInVmm(memory);
+    
+    p = nextHeapBlockInVmm(memory, p);
   }
 
   fprintf(out, "--------------------- --------------------- --- "
@@ -575,12 +639,14 @@ static void performHeapDump(FILE* out, VmMemory memory) {
 }
   
 static int executeHeapDumpCmd(Debugger dbg, DebugCommand cmd) {
-  if (cmd.args.heapDump.filename) {
-    FILE* out = fopen(cmd.args.heapDump.filename, "w");
+  if (cmd->args.heapDump.filename) {
+    logMessage(getVmLogger(dbg->vm), LogInstructions, "Dump heap to %s",
+	       cmd->args.heapDump.filename);
+    FILE* out = fopen(cmd->args.heapDump.filename, "w");
     if (!out) {
       char msg[200];
-      snprintf("Failed to open file %s (%s)",
-	       cmd.args.heapDump.filename, strerror(errno));
+      snprintf(msg, sizeof(msg), "Failed to open file %s (%s)",
+	       cmd->args.heapDump.filename, strerror(errno));
       setDebuggerStatus(dbg, DebuggerCommandExecutionError, msg);
       return -1;
     }
@@ -588,6 +654,7 @@ static int executeHeapDumpCmd(Debugger dbg, DebugCommand cmd) {
     fclose(out);
     return 0;
   } else {
+    logMessage(getVmLogger(dbg->vm), LogInstructions, "Dump heap to stdout");
     performHeapDump(stdout, getVmMemory(dbg->vm));
     return 0;
   }
@@ -595,6 +662,7 @@ static int executeHeapDumpCmd(Debugger dbg, DebugCommand cmd) {
 
 static int executeQuitVmCmd(Debugger dbg, DebugCommand cmd) {
   setDebuggerStatus(dbg, DebuggerQuitVm, "Quit VM");
+  logMessage(getVmLogger(dbg->vm), LogInstructions, "Quit VM");
   return 0;
 }
 
@@ -660,7 +728,8 @@ static int executeLookupSymbolCmd(Debugger dbg, DebugCommand cmd) {
     return -1;
   }
 
-  Symbol s = findSymbol(getVmSymbolTable(dbg->vm), cmd->args.lookupSymbol.name);
+  const Symbol* s = findSymbol(getVmSymbolTable(dbg->vm),
+			       cmd->args.lookupSymbol.name);
   if (s) {
     fprintf(stdout, "Symbol [%s] is at %" PRIu64 "\n", s->name, s->address);
   } else {
@@ -669,4 +738,3 @@ static int executeLookupSymbolCmd(Debugger dbg, DebugCommand cmd) {
 
   return 0;
 }
-

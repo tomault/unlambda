@@ -322,8 +322,8 @@ static void setStackStatus(Stack s, int statusCode, const char* statusMsg) {
 static void setStackOverflowError(Stack s, size_t size) {
   char msg[200];
   snprintf(msg, sizeof(msg),
-	   "Stack overflow - increasing the size of the stack by %zd bytes "
-	   "would exceed the maximum size of %zd bytes",
+	   "Stack overflow - increasing the size of the stack by %zu bytes "
+	   "would exceed the maximum size of %zu bytes",
 	   size, s->maxSize);
   setStackStatus(s, StackOverflowError, msg);
 }

@@ -119,6 +119,20 @@ const Symbol* getSymbolAtAddress(SymbolTable symtab, uint64_t address);
  */
 const Symbol* getSymbolBeforeAddress(SymbolTable symtab, uint64_t address);
 
+/** Find the first symbol at or before the given address
+ *
+ *  Logarithmic in the number of symbols stored in the table.
+ *
+ *  Arguments
+ *    symtab   The symbol table to search
+ *    address  The address to find
+ *
+ *  Returns:
+ *    A pointer to the symbol whose address is closest to but less than
+ *    "address" or NULL if no such symbol exists.
+ */
+const Symbol* getSymbolAtOrBeforeAddress(SymbolTable symtab, uint64_t address);
+
 /** Find the first symbol after the given address
  *
  *  Logarithmic in the number of symbols stored in the table.
@@ -132,6 +146,21 @@ const Symbol* getSymbolBeforeAddress(SymbolTable symtab, uint64_t address);
  *    "address" or NULL if no such symbol exists.
  */
 const Symbol* getSymbolAfterAddress(SymbolTable symtab, uint64_t address);
+
+/** Find the first symbol at or after the given address
+ *
+ *  Logarithmic in the number of symbols stored in the table.
+ *
+ *  Arguments
+ *    symtab   The symbol table to search
+ *    address  The address to find
+ *
+ *  Returns:
+ *    A pointer to the symbol whose address is equal to the given address
+ *    or closest to it but greater than the given addres.  Returns NULL
+ *    if the table is empty.
+ */
+const Symbol* getSymbolAtOrAfterAddress(SymbolTable symtab, uint64_t address);
 
 /** Add a symbol to the table
  *

@@ -1,6 +1,7 @@
 #ifndef __VM_H__
 #define __VM_H__
 
+#include <logging.h>
 #include <stdint.h>
 #include <stack.h>
 #include <symtab.h>
@@ -153,6 +154,16 @@ int loadVmProgramFromMemory(UnlambdaVM vm, const char* name,
  */
 int stepVm(UnlambdaVM vm);
 
+/** Set the VM's logger
+ *
+ *  Also sets the logger the VM's memory uses to this logger.
+ *
+ *  Setting the logger to NULL disables logging.
+ */
+void setVmLogger(UnlambdaVM vm, Logger logger);
+
+/** Get the VM's logger */
+Logger getVmLogger(UnlambdaVM vm);
 
 /** Status codes returned by getVmStatus() */
 #ifdef __cplusplus

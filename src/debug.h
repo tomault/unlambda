@@ -30,11 +30,12 @@
  *  Frame numbers start at 0 for the top of the stack
  */
 
+#include <brkpt.h>
 #include <dbgcmd.h>
 #include <vm.h>
 #include <stddef.h>
 
-typedef struct DebuggerImpl_ Debugger;
+typedef struct DebuggerImpl_* Debugger;
 
 /** Create a new debugger for the given virtual machine */
 Debugger createDebugger(UnlambdaVM vm, uint32_t maxBreakpoints);
@@ -46,6 +47,13 @@ int getDebuggerStatus(Debugger dbg);
 const char* getDebuggerStatusMsg(Debugger dbg);
 void clearDebuggerStatus(Debugger dbg);
 
+UnlambdaVM getDebuggerVm(Debugger dbg);
+BreakpointList getDebuggerPersistentBreakpoints(Debugger dbg);
+BreakpointList getDebuggerTransientBreakpoints(Debugger dbg);
+
+/** Clear all transient breakpoints */
+int clearDebuggerTransientBreakpoints(Debugger dbg);
+
 /** Returns true if VM execution should temporarily halt and enter debug
  *  mode
  */
@@ -53,6 +61,26 @@ int shouldBreakExecution(Debugger dbg);
 
 /** Execute a debug command */
 int executeDebugCommand(Debugger dbg, DebugCommand cmd);
+
+#ifdef __cplusplus
+
+const int DebuggerIllegalArgumentError = -1;
+const int DebuggerInvalidCommandError = -2;
+const int DebuggerCommandExecutionError = -3;
+const int DebuggerResumeExecution = -4;
+const int DebuggerQuitVm = -5;
+const int DebuggerOperationFailedError = -6;
+
+#else
+
+const int DebuggerIllegalArgumentError;
+const int DebuggerInvalidCommandError;
+const int DebuggerCommandExecutionError;
+const int DebuggerResumeExecution;
+const int DebuggerQuitVm;
+const int DebuggerOperationFailedError;
+
+#endif
 
 #endif
 

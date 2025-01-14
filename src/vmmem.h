@@ -2,6 +2,7 @@
 #define __VMMEM_H__
 
 /** Simulated memory for the Unlambda virtual machine */
+#include <logging.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stack.h>
@@ -107,6 +108,15 @@ const char* getVmmStatusMsg(VmMemory memory);
 
 /** Clear the last error and reset status to 0/OK */
 void clearVmmStatus(VmMemory memory);
+
+/** Get the logger this VmMemory uses */
+Logger getVmmLogger(VmMemory memory);
+
+/** Set the logger this VmMemory uses 
+ *
+ *  Setting the logger to NULL disables logging.
+ */
+void setVmmLogger(VmMemory memory, Logger logger);
 
 /** Return the current size of the memory, in bytes */
 uint64_t currentVmmSize(VmMemory memory);

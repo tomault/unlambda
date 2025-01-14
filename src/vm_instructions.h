@@ -68,4 +68,59 @@ const uint8_t* disassembleVmCode(const uint8_t* code,
 				 const uint8_t* startOfHeap,
 				 const uint8_t* endOfMemory,
 				 SymbolTable symtab, FILE* out);
+
+/** Disassemble a single line of code
+ *
+ *  Disassemble one line of code and return that disassembly.  Allocates
+ *  an in-memory stream, calls disassembleVmCode to write the disassembly to
+ *  that stream, closes that stream and returns the text written to that
+ *  stream.  The caller owns the returned string and must deallocate it
+ *  when it is no longer needed.
+ *
+ *  
+ *  Arguments:
+ *    code            Start diassembly here
+ *    startOfMemory   Start of the VMs memory
+ *    startOfHeap     Start of the heap.  Everything in [startOfMemory,
+ *                      startOfHeap) is code space, while everything
+ *                      in [startOfHeap, endOfMemory) is heap space.
+ *    endOfMemory     End of the VMs memory.
+ *    symtab          Table used to look up symbols to produce a cleaner
+ *                      looking disassembly.  May be NULL, in which case
+ *                      all addresses are written as decimal numbers
+ *
+ *  Returns:
+ *    A string containing the disassembly of one line of code starting
+ *    at "code."  The string will end in a line terminator.  May contain more
+ *    than one line of text if there is a symbol located at code
+ *    (e.g. may return "COW:\n  1 05 PCALL\n".  May return an error message
+ *    if disassembleVmCode() writes one.  May return NULL if closing the
+ *    in-memory stream produces a NULL value for the stream text.
+ */
+const char* disassembleOneLine(const uint8_t* code,
+			       const uint8_t* startOfMemory,
+			       const uint8_t* startOfHeap,
+			       const uint8_t* endOfMemory,
+			       SymbolTable symtab);
+
+/** Write a VM address in both numeric and symbolic form
+ *
+ *  If an address lies outside the heap (address < heapStart), then it
+ *  is written as "<decimal number> (<symbol>+<offset>)" where <symbol>
+ *  is the first symbol before <address>.  If there is no such symbol,
+ *  or the address lies inside the heap, then the address is written
+ *  as just "<address>".
+ *
+ *  Arguments:
+ *    address      Address to write
+ *    startOfHeap  Where the heap starts
+ *    symtab       The symbol table
+ *    out          Where to write the address
+ *
+ *  Returns:
+ *    Nothing
+ */
+void writeAddressWithSymbol(uint64_t address, uint64_t startOfHeap,
+			    SymbolTable symtab, FILE* out);
+			    
 #endif

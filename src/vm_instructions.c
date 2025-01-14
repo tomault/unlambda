@@ -1,4 +1,7 @@
 #include "vm_instructions.h"
+#include <assert.h>
+#include <inttypes.h>
+#include <stdarg.h>
 
 static const uint8_t INSTRUCTION_SIZE[] = {
     1, 9, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1,
@@ -21,6 +24,32 @@ uint8_t instructionSize(uint8_t instruction) {
 const char* instructionName(uint8_t instruction) {
   return (instruction < NUM_INSTRUCTIONS) ? INSTRUCTION_NAME[instruction]
                                           : UNKNOWN_INSTRUCTION_NAME;
+}
+
+static void writeRawHex(const uint8_t* instruction,
+			const uint8_t* endOfMemory,
+			char* out, size_t outSize) {
+  char* q = out;
+  char* end = out + outSize;
+
+  if (instruction < endOfMemory) {
+    uint8_t numBytes = instructionSize(*instruction);
+    size_t remaining = outSize;
+
+    if ((instruction + numBytes) > endOfMemory) {
+      numBytes = endOfMemory - instruction;
+    }
+
+    for (uint8_t i = 0; (i < numBytes) && (q < end); ++i) {
+      snprintf(q, end - q, " %02X", (uint32_t)instruction[i]);
+      q += 3;
+    }
+  }
+
+  while (q < (end - 1)) {
+    *q++ = ' ';
+  }
+  *q = 0;
 }
 
 const uint8_t* disassembleVmCode(const uint8_t* code,
@@ -73,19 +102,22 @@ const uint8_t* disassembleVmCode(const uint8_t* code,
     return NULL;
   }
 
-  Symbol* sym = getSymbolAtAddress(symtab, code);
+  const Symbol* sym =
+    symtab ? getSymbolAtAddress(symtab, (uint64_t)(code - startOfMemory))
+           : NULL;
   if (sym) {
-    fprintf(out, "%21" PRIu64 "    %s:\n", (uint64_t)(code - startOfMemory),
-	    sym->name);
+    fprintf(out, "%21s  %27s%s:\n", " ", " ", sym->name);
   }
 
-  fprintf(out, "%21" PRIu64 " %02" PRIx8 "   ",
-	  (uint64_t)(code - startOfMemory), *code);
+  char rawHex[28];
+  writeRawHex(code, endOfMemory, rawHex, sizeof(rawHex));
+  fprintf(out, "%21" PRIu64 " %27s  ", (uint64_t)(code - startOfMemory),
+	  rawHex);
 	  
   switch (*code) {
     case PUSH_INSTRUCTION: {
       if ((code + 9) > endOfMemory) {
-	fprintf(" **ERROR: Address for %s trucated by end of memory\n",
+	fprintf(out, " **ERROR: Address for %s trucated by end of memory\n",
 		INSTRUCTION_NAME[*code]);
 	return NULL;
       }
@@ -127,8 +159,8 @@ const uint8_t* disassembleVmCode(const uint8_t* code,
 	fprintf(out, " **ERROR: Argument for %s truncated by end of memory\n",
 		INSTRUCTION_NAME[*code]);
 	return NULL;
-      } else if ((code[1] < 32) || ((code[1] >= 128) && (code[1] < 160))) {
-	fprintf(out, " %s '\\x%02" PRIu8 "'\n", INSTRUCTION_NAME[*code],
+      } else if ((code[1] < 32) || ((code[1] >= 127) && (code[1] < 160))) {
+	fprintf(out, " %s '\\x%02" PRIx8 "'\n", INSTRUCTION_NAME[*code],
 		code[1]);
       } else {
 	fprintf(out, " %s '%c'\n", INSTRUCTION_NAME[*code], code[1]);
@@ -142,5 +174,35 @@ const uint8_t* disassembleVmCode(const uint8_t* code,
 	fprintf(out, " %s\n", UNKNOWN_INSTRUCTION_NAME);
       }
       return code + 1;
+  }
+}
+
+const char* disassembleOneLine(const uint8_t* code,
+			       const uint8_t* startOfMemory,
+			       const uint8_t* startOfHeap,
+			       const uint8_t* endOfMemory,
+			       SymbolTable symtab) {
+  char* text = NULL;
+  size_t textLength = 0;
+  FILE* memstream = open_memstream(&text, &textLength);
+  if (!memstream) {
+    return NULL;
+  }
+  disassembleVmCode(code, startOfMemory, startOfHeap, endOfMemory,
+		    symtab, memstream);
+  fclose(memstream);
+  return text;
+}
+
+void writeAddressWithSymbol(uint64_t address, uint64_t startOfHeap,
+			    SymbolTable symtab, FILE* out) {
+  const Symbol* symbol = getSymbolAtOrBeforeAddress(symtab, address);
+  fprintf(out, "%20" PRIu64, address);
+  if (symbol && symbol->address == address) {
+    fprintf(out, " (%s)", symbol->name);
+  } else if (symbol) {
+    assert(symbol->address < address);
+    fprintf(out, " (%s+%" PRIu64 ")", symbol->name,
+	    (uint64_t)(address - symbol->address));
   }
 }

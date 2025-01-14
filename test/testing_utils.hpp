@@ -418,7 +418,22 @@ namespace unlambda {
      *  Throws:
      *    Nothing
      */
-    ::testing::AssertionResult verifyArray(Array a, const uint8_t* trueData,
+    ::testing::AssertionResult verifyArray(Array a,
+					   const uint8_t* trueData,
+					   const uint64_t trueSize);
+
+    /** Verify the contents of a block of memory
+     *
+     *  Verifies the contents of memory starting at "data."
+     *
+     *  Arguments:
+     *    data      Verify memory starting from here
+     *    trueData  What the region [trueData, trueData+trueSize) should
+     *                contain
+     *    trueSize  How many bytes to verify
+     */
+    ::testing::AssertionResult verifyBytes(const uint8_t* data,
+					   const uint8_t* trueData,
 					   const uint64_t trueSize);
 
     /** Dump the contents of array "a" to stdout */
