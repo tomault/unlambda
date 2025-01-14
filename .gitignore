@@ -66,4 +66,5 @@ test/*_tests
 # Logs from valgrind
 valgrind_logs/*
 
-
+# Executable files
+src/unl
