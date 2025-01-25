@@ -11,3 +11,11 @@ target_include_directories(unl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(unl libunlambda)
 target_link_libraries(unl pthread)
+
+add_executable(unlasm unlasm.c)
+
+target_include_directories(unlasm PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(unlasm libunlambda)
+target_link_libraries(unlasm pthread)
+

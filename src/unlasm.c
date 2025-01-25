@@ -3,16 +3,20 @@
 #include <asm.h>
 #include <symtab.h>
 #include <vm_image.h>
+#include <vm_instructions.h>
 
+#include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
-void reportError(cost char* fileame, uint32_t line, uint32_t column,
+void reportError(const char* fileame, uint32_t line, uint32_t column,
 		 const char* lineText, const char* errorMessage) {
   fprintf(stdout, "%s\n", lineText);
-  for (uint32_t i = 0l i < column; ++i) {
+  for (uint32_t i = 0; i < column; ++i) {
     fprintf(stdout, "-");
   }
   fprintf(stdout, "^\n");
@@ -45,8 +49,8 @@ int readSourceFile(const char* filename, char** text, size_t* textLen,
   *text = NULL;
   *textLen = 0;
 
-  while (!foef(f)) {
-    size_t nRead = fread(buf, 1, BUFFER_SIZE, buf);
+  while (!feof(f)) {
+    size_t nRead = fread(buf, 1, BUFFER_SIZE, f);
     if (ferror(f)) {
       char msg[200];
       snprintf(msg, sizeof(msg), "Error reading from %s: %s", filename,
@@ -61,7 +65,7 @@ int readSourceFile(const char* filename, char** text, size_t* textLen,
     char* newText = (char*)realloc(*text, *textLen + nRead + 1);
     if (!newText) {
       char msg[200];
-      snprintf(msg, sizeof(msg), "Error reading from %s: Out of memory"
+      snprintf(msg, sizeof(msg), "Error reading from %s: Out of memory",
 	       filename);
       *errorMessage = strdup(msg);
       fclose(f);
@@ -76,7 +80,7 @@ int readSourceFile(const char* filename, char** text, size_t* textLen,
   }
 
   free((void*)buf);
-  *text[t*textLen] = 0;
+  (*text)[*textLen] = 0;
   return 0;
 }
 
@@ -90,7 +94,7 @@ const char** splitLines(char* text, size_t* numLines) {
     }
     ++p;
   }
-  if ((p > start) && (p[-1] != '\n')) {
+  if ((p > text) && (p[-1] != '\n')) {
     ++n;  /** Last line before end of text */
   }  
 
@@ -102,7 +106,7 @@ const char** splitLines(char* text, size_t* numLines) {
   const char** lines = malloc(sizeof(const char*) * n);
   if (!lines) {
     fprintf(stderr, "FATAL: Could not allocate array for line boundaries\n");
-    *numLines = ;
+    *numLines = 0;
     return NULL;
   }
 
@@ -135,11 +139,11 @@ int parseAsmFile(const char* filename, const char* text, const char** lines,
     AssemblyLine* asml = parseAssemblyLine(lines[lineNum], address, lineNum + 1,
 					   &parseError);
     if (parseError) {
-      reportError(filename, lineNum + 1. parseError->column, lines[lineNum],
+      reportError(filename, lineNum + 1, parseError->column, lines[lineNum],
 		  parseError->message);
       destroyAsmParseError(parseError);
       if (asml) {
-	destroyAsmLine(asml);
+	destroyAssemblyLine(asml);
       }
       ++*numErrors;
       continue;
@@ -161,7 +165,7 @@ int parseAsmFile(const char* filename, const char* text, const char** lines,
 
       case ASM_LINE_TYPE_LABEL:
 	/** Add symbol at this address */
-	if (addSymbolToTable(symtab, asml->value.label.name, address)) {
+	if (addSymbolToTable(symtab, asml->value.label.labelName, address)) {
 	  if (getSymbolTableStatus(symtab) == SymbolExistsError) {
 	    reportError(filename, lineNum +1 , asml->column, lines[lineNum],
 			"Duplicate label");
@@ -204,7 +208,7 @@ int parseAsmFile(const char* filename, const char* text, const char** lines,
       }	
     }
 
-    if (appendToArray(asmLies, (const uint8_t*)asmLine, sizeof(asmLine))) {
+    if (appendToArray(asmLines, (const uint8_t*)&asml, sizeof(asml))) {
       if (getArrayStatus(asmLines) == ArraySequenceTooLongError) {
 	reportError(filename, lineNum + 1, asml->column, lines[lineNum],
 		    "File is too long");
@@ -215,10 +219,10 @@ int parseAsmFile(const char* filename, const char* text, const char** lines,
 	char msg[200];
 	snprintf(msg, sizeof(msg), "Could not apped AssemblyLine to Array (%s)",
 		 getArrayStatusMsg(asmLines));
-	reportError(filename, lineNum + 1, asml->column, msg);
+	reportError(filename, lineNum + 1, asml->column, lines[lineNum], msg);
       }
       ++*numErrors;
-      destroyAsmLine(asml);
+      destroyAssemblyLine(asml);
       return -1;
     }
   }
@@ -238,38 +242,42 @@ int writeBytecode(AssemblyLine* asml, SymbolTable symtab, Array bytecode,
   }
 
   /** Put the opcode */
-  if (appendToArarray(bytecode, &asml->value.instruction.opcode, 1)) {
-    assert(getArrayStatus(bytecode), ArrayOutOfMemoryError);
+  if (appendToArray(bytecode, &asml->value.instruction.opcode, 1)) {
+    assert(getArrayStatus(bytecode) == ArrayOutOfMemoryError);
     *errorMessage = strdup("Out of memory");
     return -1;
   }
 
   uint64_t operand = 0;
   
-  switch (asm->value.instruction.opcode) {
-    case PUSH_INSTRUCTION:
+  switch (asml->value.instruction.opcode) {
+    case PUSH_INSTRUCTION: {
+      uint64_t operand = 0;
       operand = resolveAsmValueToAddress(&asml->value.instruction.operand,
 					 symtab, errorMessage);
       if (errorMessage) {
 	return -1;
       }
-      if (appendToArray(bytecode, &address, 8)) {
-	assert(getArrayStatus(bytecode), ArrayOutOfMemoryError);
+      if (appendToArray(bytecode, (const uint8_t*)&operand, 8)) {
+	assert(getArrayStatus(bytecode) == ArrayOutOfMemoryError);
 	*errorMessage = strdup("Out of memory");
 	return -1;
       }
       break;
+    }
 
     case SAVE_INSTRUCTION:
     case RESTORE_INSTRUCTION:
-    case PRINT_INSTRUCTION:
+    case PRINT_INSTRUCTION: {
+      uint8_t operand = 0;
       operand = asml->value.instruction.operand.value.u64;
       if (appendToArray(bytecode, &operand, 1)) {
-	assert(getArrayStatus(bytecode), ArrayOutOfMemoryError);
+	assert(getArrayStatus(bytecode) == ArrayOutOfMemoryError);
 	*errorMessage = strdup("Out of memory");
 	return -1;
       }
       break;
+    }
       
     default:
       break;
@@ -280,8 +288,9 @@ int writeBytecode(AssemblyLine* asml, SymbolTable symtab, Array bytecode,
 
 int handleStartDirective(AssemblyLine* asml, SymbolTable symtab,
 			 uint64_t* startAddress, const char** errorMessage) {
-  *startAddress = resolveAsmValueToAddress(asml->value.directive.operand,
-					   symtab, errorMessage);
+  *startAddress = resolveAsmValueToAddress(
+    &asml->value.directive.operand, symtab, errorMessage
+  );
   return errorMessage ? -1 : 0;
 }
 
@@ -304,16 +313,17 @@ int handleDirective(AssemblyLine* asml, SymbolTable symtab,
   return 0;
 }
 
-int generateBytecode(const char* fileame, const char** lines,
+int generateBytecode(const char* filename, const char** lines,
 		     Array asmLines, SymbolTable symtab,
 		     Array bytecode, uint64_t* startAddress) {
   uint64_t address = 0;
   int status = 0;
-  
-  for (AssemblyLine *asml = (AssemblyLine*)startOfArray(asmLines);
-       (!status && (asml < (AssemblyLine*)endOfArray(asmLines)));
-       ++asml) {
+
+  for (AssemblyLine **asmlp = (AssemblyLine**)startOfArray(asmLines);
+       (!status && (asmlp < (AssemblyLine**)endOfArray(asmLines)));
+       ++asmlp) {
     const char* errorMessage = NULL;
+    AssemblyLine* asml = *asmlp;
     
     switch (asml->type) {
       case ASM_LINE_TYPE_EMPTY:
@@ -321,7 +331,7 @@ int generateBytecode(const char* fileame, const char** lines,
 	break;
 
       case ASM_LINE_TYPE_INSTRUCTION:
-	writeBytecode(asml, symtab, bytecode, errorMessage);
+	writeBytecode(asml, symtab, bytecode, &errorMessage);
 	if (errorMessage) {
 	  reportError(filename, asml->line, asml->column, lines[asml->line],
 		      errorMessage);
@@ -331,7 +341,7 @@ int generateBytecode(const char* fileame, const char** lines,
 	break;
 
       case ASM_LINE_TYPE_DIRECTIVE:
-	handleDirective(asml, startAddress, errorMessage);
+	handleDirective(asml, symtab, startAddress, &errorMessage);
 	if (errorMessage) {
 	  reportError(filename, asml->line, asml->column, lines[asml->line],
 		      errorMessage);
@@ -359,12 +369,12 @@ int generateBytecode(const char* fileame, const char** lines,
   return status;
 }
 
-int assembleVmCode(const char* sourceFileame, const char* executableFilename) {
+int assembleVmCode(const char* sourceFilename, const char* executableFilename) {
   char *text = NULL;
   size_t textLen = 0;
   const char* errorMessage = NULL;
-  
-  if (readSourceFile(sourceFilename, &text, &textlen, &errorMessage)) {
+
+  if (readSourceFile(sourceFilename, &text, &textLen, &errorMessage)) {
     fprintf(stdout, "%s\n", errorMessage);
     free((void*)errorMessage);
     return -1;
@@ -387,16 +397,16 @@ int assembleVmCode(const char* sourceFileame, const char* executableFilename) {
   size_t numErrors = 0;
   int status = 0;
   
-  if (parseAsmFile(sourceFilename, text, lines, numLines, asmLines, symtab
+  if (parseAsmFile(sourceFilename, text, lines, numLines, asmLines, symtab,
 		   &numErrors)) {
-    fprintf(stdout, "%d errors\nAssembly terminated\n", numErrors);
+    fprintf(stdout, "%zu errors\nAssembly terminated\n", numErrors);
     status = -1;
   } else if (generateBytecode(sourceFilename, lines, asmLines, symtab,
 			      bytecode, &startAddress)) {
     fprintf(stdout, "Assembly terminated\n");
     status = -1;
   } else if (saveVmProgramImage(executableFilename, startOfArray(bytecode),
-				arraySize(byteCode), startAddress, symtab,
+				arraySize(bytecode), startAddress, symtab,
 				&errorMessage)) {
     fprintf(stdout, "%s\n", errorMessage);
     free((void*)errorMessage);
@@ -406,6 +416,12 @@ int assembleVmCode(const char* sourceFileame, const char* executableFilename) {
     status = 0;
   }
 
+  for (AssemblyLine** asmlp = (AssemblyLine**)startOfArray(asmLines);
+       asmlp < (AssemblyLine**)endOfArray(asmLines);
+       ++asmlp) {
+    destroyAssemblyLine(*asmlp);
+  }
+  
   destroySymbolTable(symtab);
   destroyArray(bytecode);
   destroyArray(asmLines);
@@ -437,7 +453,9 @@ int parseCmdLineArgs(int argc, char** argv, CmdLineArgs* args) {
 
   while (hasMoreCmdLineArgs(parser)) {
     const char* argName = nextCmdLineArg(parser);
-    if (!strcmp(argName, "-o")) {
+    if (!strcmp(argName, "-h")) {
+      args->showUsage = -1;
+    } else if (!strcmp(argName, "-o")) {
       CHECK_FOR_MISSING_ARG(argName);
       args->executableFilename = nextCmdLineArg(parser);
     } else if (!args->sourceFilename) {
@@ -450,7 +468,7 @@ int parseCmdLineArgs(int argc, char** argv, CmdLineArgs* args) {
     }
   }
   
-  if (!showUsage) {
+  if (!args->showUsage) {
     if (!args->sourceFilename) {
       fprintf(stdout,
 	      "ERROR: File to assemble not specified.  Use -h for help");
@@ -467,11 +485,21 @@ int parseCmdLineArgs(int argc, char** argv, CmdLineArgs* args) {
   return 0;
 }
 
-int main(int argc, char* argv) {
+void usage() {
+  fprintf(stdout, "unlasm -o <output-file> <source-file>\n"
+	  "  <source-file>     File to assemble\n"
+	  "  -o <output-file>  Where to write the executable\n");
+}
+
+int main(int argc, char* argv[]) {
   CmdLineArgs args;
   int result = parseCmdLineArgs(argc, argv, &args);
   if (!result) {
-    result = assembleVmCode(args->sourceFilename, args->executableFilename);
+    if (args.showUsage) {
+      usage();
+    } else {
+      result = assembleVmCode(args.sourceFilename, args.executableFilename);
+    }
   }
   return result;
 }
