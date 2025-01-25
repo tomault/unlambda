@@ -1,0 +1,15 @@
+.start 0
+PRINT 'H'
+PRINT 'e'
+PRINT 'l'
+PRINT 'l'
+PRINT 'o'
+PRINT ' '
+PRINT 'w'
+PRINT 'o'
+PRINT 'r'
+PRINT 'l'
+PRINT 'd'
+PRINT '!'
+PRINT '\n'
+HALT
