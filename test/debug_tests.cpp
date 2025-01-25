@@ -523,6 +523,7 @@ TEST(debug_tests, executeListBreakpoints) {
   EXPECT_EQ(executeDebugCommand(dbg, cmd), 0);
   destroyDebugCommand(cmd);
 
+  destroyDebugger(dbg);
   destroyUnlambdaVM(vm);
 }
 

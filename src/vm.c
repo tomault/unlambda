@@ -597,15 +597,31 @@ int loadProgramIntoVm(UnlambdaVM vm, const char* filename, int loadSymbols) {
     return -1;
   } else {
     const char* errMsg = NULL;
+    uint64_t startAddress = 0;
 
-    int result = loadVmProgramImage(filename, vm, loadSymbols, &errMsg);
+    int result = loadVmProgramImage(filename, vm, loadSymbols, &startAddress,
+				    &errMsg);
     if (!result) {
-      vm->state = VmStateReady;
       assert(!errMsg);
+      vm->state = VmStateReady;
+      if (setVmPC(vm, startAddress)) {
+	char msg[200];
+	if (getVmStatus(vm) == VmIllegalArgumentError) {
+	  snprintf(msg, sizeof(msg),
+		   "Start address is at invalid address %" PRIu64,
+		   startAddress);
+	} else {
+	  snprintf(msg, sizeof(msg),
+		   "Failed to set VM PC to start address (%s)",
+		   getVmStatusMsg(vm));
+	}
+	setVmStatus(vm, VmImageFormatError, msg);
+	return -1;
+      }
       logMessage(vm->logger, LogGeneralInfo,
-		 "Loaded %" PRIu64 " bytes, %" PRIu32 " symbols",
-		 getVmmProgramMemorySize(vm->memory),
-		 symbolTableSize(vm->symtab));
+		 "Loaded %" PRIu64 " bytes, %" PRIu32 " symbols.  "
+		 "Start = %" PRIu64, getVmmProgramMemorySize(vm->memory),
+		 symbolTableSize(vm->symtab), startAddress);
       return 0;
     } else if (result == VmImageIllegalArgumentError) {
       char msg[200];
@@ -1614,7 +1630,7 @@ static void logStateBlockContent(Logger logger, VmMemory memory,
 	 (p < callStackEnd) && (frameCnt < MAX_FRAMES);
 	 p += 2, ++frameCnt) {
       fprintf(memstream, "%10" PRIu32 ") %20" PRIu64 " ", frameCnt, p[0]);
-      writeAddressWithSymbol(p[1], heapStartAddress, symtab, memstream);
+      writeAddressWithSymbol(p[1], 1, heapStartAddress, symtab, memstream);
       fprintf(memstream, "\n");
     }
     if (p < callStackEnd) {
@@ -1633,7 +1649,7 @@ static void logStateBlockContent(Logger logger, VmMemory memory,
 	 (p < addressStackEnd) && (frameCnt < MAX_FRAMES);
 	 ++p, ++frameCnt) {
       fprintf(memstream, "%10" PRIu32 ") ", frameCnt);
-      writeAddressWithSymbol(*p, heapStartAddress, symtab, memstream);
+      writeAddressWithSymbol(*p, 1, heapStartAddress, symtab, memstream);
       fprintf(memstream, "\n");
     }
     if (p < addressStackEnd) {

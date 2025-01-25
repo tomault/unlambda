@@ -21,6 +21,9 @@ const uint32_t LogCodeBlocks =        0x00000010;
 const uint32_t LogStateBlocks =       0x00000020;
 const uint32_t LogGC1 =               0x00000040;
 const uint32_t LogGC2 =               0x000000C0;
+const uint32_t LogAllModules =
+  LogGeneralInfo | LogInstructions | LogStacks | LogMemoryAllocations
+    | LogCodeBlocks | LogStateBlocks | LogGC1 | LogGC2;
 
 Logger createLogger(FILE* output, uint32_t modulesEnabled) {
   Logger logger = malloc(sizeof(LoggerImpl));
@@ -130,7 +133,7 @@ void logAddressStack(Logger logger, Stack addressStack, uint64_t heapStart,
       if (p < start) {
 	fprintf(memstream, ", ");
       }
-      writeAddressWithSymbol(p[-1], heapStart, symtab, memstream);
+      writeAddressWithSymbol(p[-1], 0, heapStart, symtab, memstream);
     }
     fprintf(memstream, "]");
 
@@ -170,8 +173,8 @@ void logCallStack(Logger logger, Stack callStack, uint64_t heapStart,
 	fprintf(memstream, ", ");
       }
       /** Always write the block called into as a plain number */
-      fprintf(memstream, "(%" PRIu64 " ", p[-1]);
-      writeAddressWithSymbol(p[-2], heapStart, symtab, memstream);
+      fprintf(memstream, "(%" PRIu64 ", ", p[-2]);
+      writeAddressWithSymbol(p[-1], 0, heapStart, symtab, memstream);
       fprintf(memstream, ")");
     }
     fprintf(memstream, "]");

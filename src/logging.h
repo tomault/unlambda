@@ -51,6 +51,11 @@ const uint32_t LogGC1 =               0x00000040;
 /** Log garbage collection, level 2 (includes level 1) */
 const uint32_t LogGC2 =               0x000000C0;
 
+/** Enable all logging modules */
+const uint32_t LogAllModules =
+  LogGeneralInfo | LogInstructions | LogStacks | LogMemoryAllocations
+    | LogCodeBlocks | LogStateBlocks | LogGC1 | LogGC2;
+
 #else
 
 /** General information and errors */
@@ -77,6 +82,8 @@ const uint32_t LogGC1;
 /** Log garbage collection, level 2 (includes level 1) */
 const uint32_t LogGC2;
 
+/** Enable all logging modules */
+const uint32_t LogAllModules;
 #endif
 
 #endif

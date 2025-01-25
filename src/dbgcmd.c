@@ -865,12 +865,14 @@ static DebugCommand parseWriteBytesCmd(ParserState* state) {
 
   if (state->errorCode != DEBUG_CMD_PARSE_MISSING_ARG_ERROR) {
     checkArgumentParsed(state, "bytes to write");
+    destroyArray(data);
     return makeParseErrorFromState(state);
   }
 
   if (!arraySize(data)) {
     setParseError(state, DEBUG_CMD_PARSE_MISSING_ARG_ERROR,
 		  "Bytes to write are missing");
+    destroyArray(data);
     return makeParseErrorFromState(state);
   }
   

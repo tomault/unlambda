@@ -65,6 +65,10 @@ test/*_tests
 
 # Logs from valgrind
 valgrind_logs/*
+vg_logs/*
 
 # Executable files
 src/unl
+
+# Emacs backup files
+*~

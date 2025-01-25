@@ -164,6 +164,7 @@ static int mainLoop(VmCmdLineArgs* args) {
   }
   
   /** Load the program */
+  const char* errorMessage = NULL;
   if (loadProgramIntoVm(vm, args->executableFilePath, args->loadSymbols)) {
     fprintf(stderr, "%s\n", getVmStatusMsg(vm));
     destroyDebugger(dbg);
@@ -174,7 +175,7 @@ static int mainLoop(VmCmdLineArgs* args) {
     }
     return -1;
   }
-  
+
   int shouldRun = 1;
   int enterDebugger = args->startInDebugger;
   VmMemory memory = getVmMemory(vm);
@@ -243,7 +244,7 @@ static int mainLoop(VmCmdLineArgs* args) {
 	      const uint64_t* p = (const uint64_t*)topOfStack(s);
 	      fprintf(stdout, "  Result is ");
 	      writeAddressWithSymbol(
-		p[-1], vmmAddressForPtr(memory, getVmmHeapStart(memory)),
+		p[-1], 0, vmmAddressForPtr(memory, getVmmHeapStart(memory)),
 		getVmSymbolTable(vm), stdout
 	      );
 	    } else {

@@ -438,6 +438,66 @@ namespace unlambda {
 
     /** Dump the contents of array "a" to stdout */
     void dumpArray(Array a);
+
+    /** A temporary file used for testing
+     *
+     *  This class creates and manages a temporary file for unit tests.
+     *  The file is not opened until its first access, so another
+     *  mechanism can write the file and this class can be used to
+     *  read it.  This class deletes the temporary file when the class's
+     *  deallocator is called.
+     *
+     *  This class uses the tempnam() function to create the file name,
+     *  and therefore inherits all the security implications of using
+     *  that function.  However, since this class is used for only testing,
+     *  using tempnam() to name the file shouldn't create any serious
+     *  security implications.  Unit tests should not be writing sensitive
+     *  data, and the should verify the contents of any read and not
+     *  read unbounded amounts of data.
+     */
+    class TemporaryFile {
+    public:
+      TemporaryFile();
+      TemporaryFile(const TemporaryFile&) = delete;
+      TemporaryFile(TemporaryFile&& other);
+      virtual ~TemporaryFile() { unlink_(); }
+
+      const std::string& name() const { return name_; }
+      int fd() const { return fd_; }
+      const std::string& lastError() const { return lastError_; }
+
+      /** Read data from the file, opening it if necessary */
+      ssize_t read(void* buffer, size_t n);
+
+      /** Write data to the file, opening it if necessary */
+      ssize_t write(const void* buffer, size_t n);
+
+      /** Verify the file's content is as expected */
+      ::testing::AssertionResult verify(const void* expectedData,
+					size_t expectedSize);
+      
+      /** Close the file if it is open */
+      void close();
+
+      TemporaryFile& operator=(const TemporaryFile&) = delete;
+      TemporaryFile& operator=(TemporaryFile&& other);
+
+    protected:
+      /** Create the file name */
+      static std::string createFilename_();
+      
+      /** Open the file if it is not already open */
+      int open_(bool forRead);
+
+      /** Delete the file from disk */
+      void unlink_();
+      
+    private:
+      std::string name_;
+      int fd_;
+      std::string lastError_;
+    };
+
   }
 }
 

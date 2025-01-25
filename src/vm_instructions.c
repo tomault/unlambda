@@ -194,15 +194,22 @@ const char* disassembleOneLine(const uint8_t* code,
   return text;
 }
 
-void writeAddressWithSymbol(uint64_t address, uint64_t startOfHeap,
+void writeAddressWithSymbol(uint64_t address, int pad, uint64_t startOfHeap,
 			    SymbolTable symtab, FILE* out) {
-  const Symbol* symbol = getSymbolAtOrBeforeAddress(symtab, address);
-  fprintf(out, "%20" PRIu64, address);
-  if (symbol && symbol->address == address) {
-    fprintf(out, " (%s)", symbol->name);
-  } else if (symbol) {
-    assert(symbol->address < address);
-    fprintf(out, " (%s+%" PRIu64 ")", symbol->name,
-	    (uint64_t)(address - symbol->address));
+  if (pad) {
+    fprintf(out, "%20" PRIu64, address);
+  } else {
+    fprintf(out, "%" PRIu64, address);
+  }
+  
+  if (address < startOfHeap) {
+    const Symbol* symbol = getSymbolAtOrBeforeAddress(symtab, address);
+    if (symbol && symbol->address == address) {
+      fprintf(out, " (%s)", symbol->name);
+    } else if (symbol) {
+      assert(symbol->address < address);
+      fprintf(out, " (%s+%" PRIu64 ")", symbol->name,
+	      (uint64_t)(address - symbol->address));
+    }
   }
 }

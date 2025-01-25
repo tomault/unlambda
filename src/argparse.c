@@ -24,7 +24,7 @@ CmdLineArgParser createCmdLineArgParser(int argc, char** argv) {
   if (parser) {
     parser->argv = argv;
     parser->argc = argc;
-    parser->current = 1;
+    parser->current = 0;
     parser->statusCode = 0;
     parser->statusMsg = OK_MSG;
   }
@@ -33,6 +33,7 @@ CmdLineArgParser createCmdLineArgParser(int argc, char** argv) {
 }
 
 void destroyCmdLineArgParser(CmdLineArgParser parser) {
+  clearCmdLineArgParserStatus(parser);
   free((void*)parser);
 }
 
@@ -84,20 +85,23 @@ static void setNoMoreArguments(CmdLineArgParser parser) {
 }
 
 int hasMoreCmdLineArgs(CmdLineArgParser parser) {
-  return parser->current < parser->argc;
+  return (parser->current + 1) < parser->argc;
 }
 
 const char* currentCmdLineArg(CmdLineArgParser parser) {
-  return hasMoreCmdLineArgs(parser) ? parser->argv[parser->current] : NULL;
+  return (parser->current && (parser->current < parser->argc))
+           ? parser->argv[parser->current]
+           : NULL;
 }
 
 const char* nextCmdLineArg(CmdLineArgParser parser) {
   clearCmdLineArgParserStatus(parser);
   if (!hasMoreCmdLineArgs(parser)) {
+    parser->current = parser->argc;
     setNoMoreArguments(parser);
     return NULL;
   } else {
-    return parser->argv[parser->current++];
+    return parser->argv[++parser->current];
   }
 }
 
@@ -125,12 +129,14 @@ const char* nextCmdLineArgInSet(CmdLineArgParser parser,
       snprintf(optionsList + current, remaining, "\"%s\"", options[i]);
       if (remaining < optionLen) {
 	remaining = 0;
+	current = sizeof(optionsList) - 1;
       } else {
 	remaining -= optionLen;
+	current += optionLen;
       }
     }
 
-    snprintf(msg, sizeof(msg), "Value is \"%s\" but it should be one of: %s",
+    snprintf(msg, sizeof(msg), "Value is \"%s\", but it should be one of: %s",
 	     next, optionsList);
     setCmdLineArgParserStatus(parser, InvalidCmdLineArgError, msg);
     next = NULL;
@@ -162,7 +168,8 @@ uint32_t nextCmdLineArgAsUInt32(CmdLineArgParser parser) {
   uint64_t v = nextCmdLineArgAsUInt64(parser);
   if (!getCmdLineArgParserStatus(parser) && (v > 0xFFFFFFFF)) {
     setCmdLineArgParserStatus(parser, InvalidCmdLineArgError,
-			      "Value is too large");
+			      "Value must be a nonnegative integer "
+			      "< 4294967296");
     v = 0;
   }
   return v;

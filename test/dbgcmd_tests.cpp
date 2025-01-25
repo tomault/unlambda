@@ -327,7 +327,7 @@ TEST(dbgcmd_tests, parseWriteBytesCmd) {
 			     "Bytes to write are missing"));
   EXPECT_TRUE(testParseError(vm, "w 128 256", DEBUG_CMD_PARSE_INVALID_ARG_ERROR,
 			     "Invalid bytes to write (Value is too large)"));
-
+  destroyUnlambdaVM(vm);
   // TODO: Test writing more than 65536 bytes
 }
 
@@ -339,6 +339,7 @@ TEST(dbgcmd_tests, parseDumpAddressStackCmd) {
   EXPECT_TRUE(testDumpAddressStackCmd(vm, "as 4 2", 4, 2));
   EXPECT_TRUE(testParseError(vm, "as 4 2 24", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseModifyAddrStackCmd) {
@@ -351,6 +352,7 @@ TEST(dbgcmd_tests, parseModifyAddrStackCmd) {
 			     "Required argument \"address\" is missing"));
   EXPECT_TRUE(testParseError(vm, "was 2 985 4", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));	      
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parsePushAddreessCmd) {
@@ -361,6 +363,7 @@ TEST(dbgcmd_tests, parsePushAddreessCmd) {
 			     "Required argument \"address\" is missing"));
   EXPECT_TRUE(testParseError(vm, "pas 684 685", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));	      
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parsePopAddressCmd) {
@@ -369,6 +372,7 @@ TEST(dbgcmd_tests, parsePopAddressCmd) {
   EXPECT_TRUE(testAnyNoArgumentCmd(vm, "ppas", POP_ADDRESS_STACK_CMD));
   EXPECT_TRUE(testParseError(vm, "ppas 2", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseDumpCallStackCmd) {
@@ -379,6 +383,7 @@ TEST(dbgcmd_tests, parseDumpCallStackCmd) {
   EXPECT_TRUE(testDumpCallStackCmd(vm, "cs 3 8", 3, 8));
   EXPECT_TRUE(testParseError(vm, "cs 3 8 1", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseModifyCallStackCmd) {
@@ -394,6 +399,7 @@ TEST(dbgcmd_tests, parseModifyCallStackCmd) {
 			     "missing"));
   EXPECT_TRUE(testParseError(vm, "wcs 1 540 17 x", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parsePushCallStackCmd) {
@@ -407,6 +413,7 @@ TEST(dbgcmd_tests, parsePushCallStackCmd) {
 			     "missing"));
   EXPECT_TRUE(testParseError(vm, "pcs 564 32 0", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parsePopCallStackCmd) {
@@ -415,6 +422,7 @@ TEST(dbgcmd_tests, parsePopCallStackCmd) {
   EXPECT_TRUE(testAnyNoArgumentCmd(vm, "ppcs", POP_CALL_STACK_CMD));
   EXPECT_TRUE(testParseError(vm, "ppcs +1", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseListBreakpointsCmd) {
@@ -423,6 +431,7 @@ TEST(dbgcmd_tests, parseListBreakpointsCmd) {
   EXPECT_TRUE(testAnyNoArgumentCmd(vm, "b", LIST_BREAKPOINTS_CMD));
   EXPECT_TRUE(testParseError(vm, "b 1", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseAddBreakpointCmd) {
@@ -434,6 +443,7 @@ TEST(dbgcmd_tests, parseAddBreakpointCmd) {
   EXPECT_TRUE(testParseError(vm, "ba 178 disabled",
 			     DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseRemoveBreakpointCmd) {
@@ -444,6 +454,7 @@ TEST(dbgcmd_tests, parseRemoveBreakpointCmd) {
   EXPECT_TRUE(testRemoveBreakpointCmd(vm, "bd 999", 999));
   EXPECT_TRUE(testParseError(vm, "bd 999 54", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseRunCmd) {
@@ -454,6 +465,7 @@ TEST(dbgcmd_tests, parseRunCmd) {
   EXPECT_TRUE(testRunCmd(vm, "r 123456", 123456));
   EXPECT_TRUE(testParseError(vm, "r 123 456", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseRunUntilReturnCmd) {
@@ -462,6 +474,7 @@ TEST(dbgcmd_tests, parseRunUntilReturnCmd) {
   EXPECT_TRUE(testAnyNoArgumentCmd(vm, "rr", RUN_UNTIL_RETURN_CMD));
   EXPECT_TRUE(testParseError(vm, "rr 2", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseSingleStepIntoCmd) {
@@ -470,6 +483,7 @@ TEST(dbgcmd_tests, parseSingleStepIntoCmd) {
   EXPECT_TRUE(testAnyNoArgumentCmd(vm, "s", SINGLE_STEP_INTO_CMD));
   EXPECT_TRUE(testParseError(vm, "s 2", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseSingleStepOverCmd) {
@@ -478,6 +492,7 @@ TEST(dbgcmd_tests, parseSingleStepOverCmd) {
   EXPECT_TRUE(testAnyNoArgumentCmd(vm, "ss", SINGLE_STEP_OVER_CMD));
   EXPECT_TRUE(testParseError(vm, "ss 2", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseHeapDumpCmd) {
@@ -489,6 +504,7 @@ TEST(dbgcmd_tests, parseHeapDumpCmd) {
   EXPECT_TRUE(testParseError(vm, "hd abc.txt full",
 			     DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseQuitVmCmd) {
@@ -497,6 +513,7 @@ TEST(dbgcmd_tests, parseQuitVmCmd) {
   EXPECT_TRUE(testAnyNoArgumentCmd(vm, "q", QUIT_VM_CMD));
   EXPECT_TRUE(testParseError(vm, "q now", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));  
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseShowHelpCmd) {
@@ -505,6 +522,7 @@ TEST(dbgcmd_tests, parseShowHelpCmd) {
   EXPECT_TRUE(testAnyNoArgumentCmd(vm, "h", SHOW_HELP_CMD));
   EXPECT_TRUE(testParseError(vm, "h breakpoints", DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseLookupSymbolCmd) {
@@ -521,6 +539,7 @@ TEST(dbgcmd_tests, parseLookupSymbolCmd) {
   EXPECT_TRUE(testParseError(vm, "sym dave carol",
 			     DEBUG_CMD_PARSE_SYNTAX_ERROR,
 			     "Too many arguments"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, resolveSymbolicAddress) {
@@ -550,6 +569,7 @@ TEST(dbgcmd_tests, resolveSymbolicAddress) {
 			     DEBUG_CMD_PARSE_INVALID_ARG_ERROR,
 			     "Invalid address (Invalid displacement "
 			     "(Value is not a number))"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseInvalidIntegers) {
@@ -568,6 +588,7 @@ TEST(dbgcmd_tests, parseInvalidIntegers) {
   EXPECT_TRUE(testParseError(vm, "l 0 4294967296",
 			     DEBUG_CMD_PARSE_INVALID_ARG_ERROR,
 			     "Invalid number of lines (Value is too large)"));
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseEmptyCommands) {
@@ -580,6 +601,7 @@ TEST(dbgcmd_tests, parseEmptyCommands) {
 
   cmd = parseDebugCommand(vm, "\t   \t ");
   EXPECT_EQ(cmd, (void*)0);
+  destroyUnlambdaVM(vm);
 }
 
 TEST(dbgcmd_tests, parseInvalidCommands) {
@@ -594,4 +616,5 @@ TEST(dbgcmd_tests, parseInvalidCommands) {
   EXPECT_TRUE(testParseError(vm, "badcmd", DEBUG_CMD_UNKNOWN_CMD_ERROR,
 			     "Unknown command \"badcmd\".  Use h to print "
 			     "a list of commands"));
+  destroyUnlambdaVM(vm);
 }

@@ -7,6 +7,15 @@ extern "C" {
 #include <iomanip>
 #include <sstream>
 
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 extern "C" {
 /** Not part of the VmMemory public API.  Used only for testing */
 void setVmmFreeList(VmMemory memory, uint64_t addrOfFirstFreeBlock,
@@ -462,4 +471,154 @@ static std::string dumpBytesInMemory(const uint8_t* const data,
 
 void unl_test::dumpArray(Array a) {
   std::cout << unl_test::toString(startOfArray(a), arraySize(a));
+}
+
+unl_test::TemporaryFile::TemporaryFile()
+  : name_(unl_test::TemporaryFile::createFilename_()), fd_(-1), lastError_() {
+}
+
+unl_test::TemporaryFile::TemporaryFile(unl_test::TemporaryFile&& other)
+  : name_(std::move(other.name_)), fd_(other.fd_),
+    lastError_(std::move(other.lastError_)) {
+  other.fd_ = -1;
+}
+
+ssize_t unl_test::TemporaryFile::read(void* buffer, size_t n) {
+  lastError_ = std::string();
+  
+  if (!n) {
+    return 0;
+  }
+
+  if (open_(true)) {
+    return -1;
+  } else {
+    ssize_t nRead = ::read(fd_, buffer, n);
+    if (nRead < 0) {
+      std::ostringstream msg;
+      msg << "Error reading from " << name() << ": " << strerror(errno);
+      lastError_ = msg.str();
+    }
+    return nRead;
+  }
+}
+
+ssize_t unl_test::TemporaryFile::write(const void* buffer, size_t n) {
+  lastError_ = std::string();
+  if (!n) {
+    return 0;
+  }
+
+  if (open_(false)) {
+    return -1;
+  } else {
+    ssize_t nWritten = ::write(fd_, buffer, n);
+    if (nWritten < 0) {
+      std::ostringstream msg;
+      msg << "Error writing to " << name() << ": " << strerror(errno);
+      lastError_ = msg.str();
+    }
+    return nWritten;
+  }
+}
+
+::testing::AssertionResult unl_test::TemporaryFile::verify(
+    const void* expectedData, size_t expectedSize
+) {
+  uint8_t* data = (uint8_t*)malloc(expectedSize + 1);
+  const uint8_t* expectedBytes = (const uint8_t*)expectedData;
+  if (!data) {
+    close();
+    return ::testing::AssertionFailure()
+      << "Failed to open file " << name() << " for verification: Could not "
+      << "allocate buffer to hold file contents";
+  }
+
+  ssize_t nRead = read((void*)data, expectedSize + 1);
+  if (nRead < 0) {
+    close();
+    ::free((void*)data);
+    return ::testing::AssertionFailure() << lastError();
+  } else if (nRead != expectedSize) {
+    close();
+    ::free((void*)data);
+    return ::testing::AssertionFailure()
+      << "Read " << nRead << " bytes from " << name()
+      << ", but expected to read " << expectedSize << " bytes";
+  } else if (::memcmp(data, expectedData, expectedSize)) {
+    std::ostringstream msg;
+    msg << "Content of " << name() << " is incorrect.\n";
+    for (size_t i = 0; i < expectedSize; i += 16) {
+      msg << std::setw(8) << std::dec << i << " ";
+      for (size_t j = i; (j < (i + 16)) && (j < expectedSize); ++j) {
+	msg << " " << std::setw(2) << std::setfill('0') << std::hex
+	    << (uint32_t)data[j];
+      }
+      msg << "\n         ";
+      for (size_t j = i; (j < (i + 16)) && (j < expectedSize); ++j) {
+	if (data[j] == expectedBytes[j]) {
+	  msg << "   ";
+	} else {
+	  msg << " " << std::setw(2) << std::setfill('0') << std::hex
+	      << (uint32_t)expectedBytes[j];
+	}	  
+      }
+      msg << "\n";
+    }
+    return ::testing::AssertionFailure() << msg.str();
+  }
+
+  close();
+  ::free((void*)data);
+  return ::testing::AssertionSuccess();
+}
+
+void unl_test::TemporaryFile::close() {
+  lastError_ = std::string();
+  if (fd_ >= 0) {
+    ::close(fd_);
+    fd_ = -1;
+  }
+}
+
+unl_test::TemporaryFile& unl_test::TemporaryFile::operator=(
+  unl_test::TemporaryFile&& other
+) {
+  if (this != &other) {
+    close();
+    name_ = std::move(other.name_);
+    fd_ = other.fd_;
+    lastError_ = std::move(other.lastError_);
+    other.fd_ = -1;
+  }
+  return *this;
+}
+
+std::string unl_test::TemporaryFile::createFilename_() {
+  char* filename = tempnam("/tmp", NULL);
+  std::string result(filename);
+  free((void*)filename);
+  return std::move(result);
+}
+
+int unl_test::TemporaryFile::open_(bool forRead) {
+  if (fd_ < 0) {
+    int flags = forRead ? O_RDONLY : O_WRONLY | O_CREAT | O_EXCL;
+    fd_ = ::open(name().c_str(), flags, 0666);
+    if (fd_ < 0) {
+      std::ostringstream msg;
+      msg << "Failed to open " << name() << ": " << strerror(errno);
+      lastError_ = msg.str();
+      return -1;
+    }
+  }
+  return 0;
+}
+
+void unl_test::TemporaryFile::unlink_() {
+  close();
+  if (::unlink(name().c_str())) {
+    std::cerr << "WARNING: Failed to unlink temporary file " << name()
+	      << ": " << strerror(errno) << std::endl;
+  }
 }

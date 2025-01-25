@@ -109,3 +109,51 @@ target_link_libraries(vm_instructions_tests libunlambda)
 target_link_libraries(vm_instructions_tests gtest_main gtest)
 target_link_libraries(vm_instructions_tests pthread)
 
+add_executable(vm_image_tests vm_image_tests.cpp testing_utils.cpp)
+
+target_include_directories(vm_image_tests PUBLIC
+                           ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(vm_image_tests PRIVATE ...)
+
+target_link_directories(vm_image_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(vm_image_tests libunlambda)
+target_link_libraries(vm_image_tests gtest_main gtest)
+target_link_libraries(vm_image_tests pthread)
+
+add_executable(logging_tests logging_tests.cpp)
+
+target_include_directories(logging_tests PUBLIC
+                           ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(logging_tests PRIVATE ...)
+
+target_link_directories(logging_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(logging_tests libunlambda)
+target_link_libraries(logging_tests gtest_main gtest)
+target_link_libraries(logging_tests pthread)
+
+add_executable(argparse_tests argparse_tests.cpp)
+
+target_include_directories(argparse_tests PUBLIC
+                           ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(argparse_tests PRIVATE ...)
+
+target_link_directories(argparse_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(argparse_tests libunlambda)
+target_link_libraries(argparse_tests gtest_main gtest)
+target_link_libraries(argparse_tests pthread)
+
+add_executable(asm_tests asm_tests.cpp)
+
+target_include_directories(asm_tests PUBLIC
+                           ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(asm_tests PRIVATE ...)
+
+target_link_directories(asm_tests PUBLIC "/usr/local/lib")
+
+target_link_libraries(asm_tests libunlambda)
+target_link_libraries(asm_tests gtest_main gtest)
+target_link_libraries(asm_tests pthread)
+

@@ -24,7 +24,9 @@
 #define PRINT_INSTRUCTION   (uint8_t)15
 #define HALT_INSTRUCTION    (uint8_t)16
 
+#define NUM_VM_INSTRUCTIONS 17
 
+  
 /** Number of bytes the instruction occupies, including both operator and
  *  operand
  */
@@ -113,6 +115,8 @@ const char* disassembleOneLine(const uint8_t* code,
  *
  *  Arguments:
  *    address      Address to write
+ *    pad          If nonzero, pad the address to 20 characters (its maximum 
+ *                   width) with spaces.  If zero, do not pad the address.
  *    startOfHeap  Where the heap starts
  *    symtab       The symbol table
  *    out          Where to write the address
@@ -120,7 +124,7 @@ const char* disassembleOneLine(const uint8_t* code,
  *  Returns:
  *    Nothing
  */
-void writeAddressWithSymbol(uint64_t address, uint64_t startOfHeap,
+void writeAddressWithSymbol(uint64_t address, int pad, uint64_t startOfHeap,
 			    SymbolTable symtab, FILE* out);
 			    
 #endif
